@@ -1,5 +1,32 @@
 # SECOND BRAIN OS — CHANGELOG
 
+## V2.1.0 — Phase 18: Goal & Initiative Engine (2026-08-23)
+- **Goal Engine**: CRUD de objetivos (8 tipos, 7 status, hierarquia
+  GOAL→SUBGOAL via parent_goal_id, métricas com progresso determinístico),
+  priorização explicável (`goalPriority` → score + reasons).
+- **Observation Engine**: 8 tipos de sinais (METRIC_CHANGE…USER_SIGNAL) com
+  provenance; nunca viram ações automaticamente.
+- **Opportunity Engine**: oportunidades derivadas de observações
+  (NEW→ANALYZING→PROPOSED→ACCEPTED/CONVERTED).
+- **Hypothesis Engine**: hipóteses com evidências/confiança/métrica/método;
+  statement "FATO:" é rejeitado (hipótese ≠ fato).
+- **Initiative Engine + Planner + Scoring**: criação vinculada a goal,
+  score determinístico (impact×3 + prob×2 − cost×1.5 − effort − risk×2 +30,
+  +8 alinhamento), planner com pipeline padrão de vendas e dependências,
+  aprovação humana explícita (approve/reject com autor e motivo),
+  proposta formatada (`brain_proposals`, CLI `brain propose`).
+- **Proactive Brain**: `brainNextActions` / `brain next` — objetivos
+  priorizados + observações + iniciativas aguardando aprovação + recomendações
+  com motivos. OBSERVA/ANALISA/PROPOE — não executa.
+- **Alinhamentos**: owner/support agents por overlap com Agent Runtime;
+  skills via Skill Intelligence (budget respeitado); tools via Tool Registry.
+- **Integrações**: `unifiedQuery` expõe goals + detecta queries proativas
+  (regex) retornando nextActions; ContextPackage inclui activeGoals.
+- Schema **v4**: goals, goal_observations, opportunities, hypotheses,
+  initiatives, initiative_tasks. Eventos: goal_created/goal_updated/
+  observation_created/opportunity_detected/initiative_created/
+  initiative_updated/proposal_approved/proposal_rejected.
+
 ## V2.0.0 — Fases 9–17 (2026-08-23)
 
 ### Phase 9 — Memory Engine

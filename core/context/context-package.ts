@@ -5,6 +5,7 @@ import { buildContext } from "../context/context-builder.ts";
 import type { BrainContext } from "../context/context-builder.ts";
 import { searchMemories } from "../memory/memory-engine.ts";
 import type { MemoryRecord } from "../memory/memory-engine.ts";
+import { listActiveGoalsByPriority } from "../goals/goal-engine.ts";
 import type { BrainConfig } from "../config/loader.ts";
 import { ValidationError } from "../errors/errors.ts";
 
@@ -27,6 +28,14 @@ export interface ContextPackage {
     category: string | null;
     summary: string;
     importance: number;
+  }>;
+  activeGoals: Array<{
+    id: string;
+    name: string;
+    type: string;
+    progressPct: number | null;
+    score: number;
+    reasons: string[];
   }>;
   decisions: BrainContext["decisions"];
   procedures: BrainContext["procedures"];
@@ -59,6 +68,7 @@ export function buildContextPackage(
 
   const db = new DatabaseSync(config.dbPath);
   let memories: ContextPackage["memories"] = [];
+  let activeGoals: ContextPackage["activeGoals"] = [];
   try {
     const memoryFilters: Parameters<typeof searchMemories>[1] = {
       limit: 5,
@@ -76,6 +86,15 @@ export function buildContextPackage(
       summary:
         m.content.length > 160 ? `${m.content.slice(0, 157)}…` : m.content,
       importance: m.importance,
+    }));
+
+    activeGoals = listActiveGoalsByPriority(db, 3).map((g) => ({
+      id: g.id,
+      name: g.name,
+      type: g.type,
+      progressPct: g.progressPct,
+      score: g.score,
+      reasons: g.reasons,
     }));
   } catch {
     context.warnings.push("memórias indisponíveis neste pacote");
@@ -95,6 +114,7 @@ export function buildContextPackage(
     project: input.project ?? null,
     context,
     memories,
+    activeGoals,
     decisions: context.decisions,
     procedures: context.procedures,
     relationships: context.relatedEntities,

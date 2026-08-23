@@ -1,9 +1,105 @@
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 export interface Migration {
   from: number;
   statements: readonly string[];
 }
+
+
+const PHASE18_DDL: readonly string[] = [
+   `CREATE TABLE IF NOT EXISTS goals (
+     id             TEXT PRIMARY KEY,
+     name           TEXT NOT NULL,
+     description    TEXT NOT NULL DEFAULT '',
+     type           TEXT NOT NULL DEFAULT 'PROJECT',
+     status         TEXT NOT NULL DEFAULT 'DRAFT',
+     priority       INTEGER NOT NULL DEFAULT 3,
+     owner_agent    TEXT,
+     parent_goal_id TEXT REFERENCES goals(id),
+     project        TEXT,
+     metric_name    TEXT,
+     target         REAL,
+     current_value  REAL,
+     deadline       TEXT,
+     constraints_json TEXT NOT NULL DEFAULT '[]',
+     created_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+     updated_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+   )`,
+   "CREATE INDEX IF NOT EXISTS idx_goals_status ON goals(status)",
+   `CREATE TABLE IF NOT EXISTS goal_observations (
+     id          INTEGER PRIMARY KEY AUTOINCREMENT,
+     obs_type    TEXT NOT NULL,
+     source      TEXT NOT NULL DEFAULT 'system',
+     project     TEXT,
+     entity_id   TEXT,
+     data        TEXT NOT NULL DEFAULT '{}',
+     confidence  REAL NOT NULL DEFAULT 0.7,
+     importance  REAL NOT NULL DEFAULT 0.5,
+     created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+   )`,
+   "CREATE INDEX IF NOT EXISTS idx_goal_obs_type ON goal_observations(obs_type)",
+   `CREATE TABLE IF NOT EXISTS opportunities (
+     id               INTEGER PRIMARY KEY AUTOINCREMENT,
+     title            TEXT NOT NULL,
+     description      TEXT NOT NULL DEFAULT '',
+     source_observation INTEGER REFERENCES goal_observations(id),
+     goal_id          TEXT REFERENCES goals(id),
+     project          TEXT,
+     potential_impact REAL,
+     estimated_effort REAL,
+     risk             REAL,
+     confidence       REAL NOT NULL DEFAULT 0.6,
+     status           TEXT NOT NULL DEFAULT 'NEW',
+     created_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+   )`,
+   `CREATE TABLE IF NOT EXISTS hypotheses (
+     id                INTEGER PRIMARY KEY AUTOINCREMENT,
+     opportunity_id    INTEGER REFERENCES opportunities(id),
+     statement         TEXT NOT NULL,
+     evidence_json     TEXT NOT NULL DEFAULT '[]',
+     confidence        REAL NOT NULL DEFAULT 0.6,
+     expected_outcome  TEXT,
+     metric_name       TEXT,
+     validation_method TEXT
+   )`,
+   `CREATE TABLE IF NOT EXISTS initiatives (
+     id               TEXT PRIMARY KEY,
+     title            TEXT NOT NULL,
+     description      TEXT NOT NULL DEFAULT '',
+     goal_id          TEXT REFERENCES goals(id),
+     project          TEXT,
+     hypothesis_id    INTEGER REFERENCES hypotheses(id),
+     owner_agent      TEXT,
+     support_agents   TEXT NOT NULL DEFAULT '[]',
+     required_skills  TEXT NOT NULL DEFAULT '[]',
+     required_tools   TEXT NOT NULL DEFAULT '[]',
+     estimated_cost   REAL,
+     effort           REAL,
+     impact           REAL,
+     probability      REAL,
+     risk             REAL,
+     expected_outcome TEXT,
+     status           TEXT NOT NULL DEFAULT 'DRAFT',
+     approval_status  TEXT NOT NULL DEFAULT 'PENDING',
+     approved_by      TEXT,
+     approved_at      TEXT,
+     rejection_reason TEXT,
+     created_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+     updated_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+   )`,
+   "CREATE INDEX IF NOT EXISTS idx_initiatives_status ON initiatives(status)",
+   `CREATE TABLE IF NOT EXISTS initiative_tasks (
+     id            INTEGER PRIMARY KEY AUTOINCREMENT,
+     initiative_id TEXT NOT NULL REFERENCES initiatives(id),
+     ordinal       INTEGER NOT NULL,
+     title         TEXT NOT NULL,
+     depends_on    INTEGER,
+     assigned_agent TEXT,
+     required_tools TEXT NOT NULL DEFAULT '[]',
+     status        TEXT NOT NULL DEFAULT 'PENDING'
+   )`,
+   "CREATE INDEX IF NOT EXISTS idx_init_tasks ON initiative_tasks(initiative_id)",
+];
 
 export const MIGRATIONS: readonly Migration[] = [
   {
@@ -31,9 +127,14 @@ export const MIGRATIONS: readonly Migration[] = [
       "CREATE INDEX IF NOT EXISTS idx_wm_task ON working_memory(task_key)",
     ],
   },
+  {
+    from: 3,
+    statements: PHASE18_DDL,
+  },
 ];
 
 export const SCHEMA_STATEMENTS: readonly string[] = [
+  ...PHASE18_DDL,
   `CREATE TABLE IF NOT EXISTS index_metadata (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL

@@ -1,7 +1,34 @@
 import { DatabaseSync } from "node:sqlite";
+
+const goalSchema = {
+  name: z.string().min(1),
+  description: z.string().optional(),
+  type: z
+    .enum([
+      "BUSINESS",
+      "PROJECT",
+      "FINANCIAL",
+      "MARKETING",
+      "SALES",
+      "PRODUCT",
+      "PERSONAL",
+      "OPERATIONAL",
+    ])
+    .optional(),
+  status: z
+    .enum(["DRAFT", "ACTIVE", "PAUSED", "ACHIEVED", "FAILED", "CANCELLED", "ARCHIVED"])
+    .optional(),
+  priority: z.number().int().min(1).max(5).optional(),
+  metricName: z.string().optional(),
+  target: z.number().optional(),
+  currentValue: z.number().optional(),
+  deadline: z.string().optional(),
+  projectId: z.string().optional(),
+};
+
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { toBrainError } from "../../core/errors/errors.ts";
+import { toBrainError, ValidationError } from "../../core/errors/errors.ts";
 import {
   searchMemories,
   getMemory,
@@ -16,6 +43,29 @@ import {
 import { getProjectIntelligence } from "../../core/projects/project-intelligence.ts";
 import { unifiedQuery } from "../../core/unified.ts";
 import { observe } from "../../core/learning/learning-loop.ts";
+import {
+  createGoal,
+  getGoal,
+  updateGoal,
+  listGoals,
+  goalPriority,
+  listActiveGoalsByPriority,} from "../../core/goals/goal-engine.ts";
+import {
+  addObservation,
+  listObservations,
+  createOpportunity,
+  listOpportunities,} from "../../core/goals/funnel.ts";
+import {
+  createInitiative,
+  getInitiative,
+  listInitiatives,
+  updateInitiativeStatus,
+  scoreInitiative,
+  planInitiative,
+  approveInitiative,
+  rejectInitiativeApproval,
+  formatProposal,} from "../../core/goals/initiatives.ts";
+import { brainNextActions } from "../../core/goals/proactive.ts";
 import {
   toolBrainContext,
   toolBrainGet,
@@ -54,6 +104,14 @@ export const TOOL_NAMES = [
   "brain_project",
   "brain_observe",
   "brain_query",
+  "brain_goals",
+  "brain_goal",
+  "brain_create_goal",
+  "brain_observations",
+  "brain_opportunities",
+  "brain_initiatives",
+  "brain_proposals",
+  "brain_next_actions",
 ] as const;
 
 function jsonResult(data: unknown) {
@@ -374,7 +432,264 @@ export function createBrainMcpServer(): McpServer {
     ),
   );
 
+  server.registerTool(
+    "brain_goals",
+    {
+      title: "Brain Goals",
+      description:
+        "Lista objetivos (GOALS). prioritized=true ordena por score deterministico com motivos explicados.",
+      inputSchema: {
+        status: z.string().optional(),
+        type: z.string().optional(),
+        prioritized: z.boolean().optional(),
+      },
+    },
+    wrapJson((a: { status?: string; type?: string; prioritized?: boolean }) => {
+      if (a.prioritized) return listActiveGoalsByPriority(openDb(), 5);
+      const db = openDb();
+      try {
+        return listGoals(db, { status: a.status, type: a.type });
+      } finally {
+        db.close();
+      }
+    }),
+  );
+
+  server.registerTool(
+    "brain_goal",
+    {
+      title: "Brain Goal",
+      description:
+        "Objetivo por id com progresso percentual deterministico e prioridade explicada.",
+      inputSchema: { id: z.string().min(1) },
+    },
+    wrapJson((a: { id: string }) => {
+      const g = getGoal(openDb(), a.id);
+      const p = goalPriority(g);
+      return { ...g, priorityScore: p.score, priorityReasons: p.reasons };
+    }),
+  );
+
+  server.registerTool(
+    "brain_create_goal",
+    {
+      title: "Brain Create Goal",
+      description:
+        "Cria um GOAL — o que queremos alcancar. Nao e tarefa nem iniciativa.",
+      inputSchema: goalSchema,
+    },
+    wrapJson((a: Record<string, unknown>) =>
+      createGoal(openDb(), a as unknown as Parameters<typeof createGoal>[1]),
+    ),
+  );
+
+  server.registerTool(
+    "brain_observations",
+    {
+      title: "Brain Observations",
+      description:
+        "Registra ou lista observacoes (METRIC_CHANGE, PROBLEM, OPPORTUNITY_SIGNAL, etc). Nao viram acoes automaticamente.",
+      inputSchema: {
+        action: z.enum(["add", "list"]).default("list"),
+        type: z
+          .enum([
+            "METRIC_CHANGE",
+            "NEW_INFORMATION",
+            "PROBLEM",
+            "OPPORTUNITY_SIGNAL",
+            "DEADLINE",
+            "PATTERN",
+            "ANOMALY",
+            "USER_SIGNAL",
+          ])
+          .optional(),
+        source: z.string().optional(),
+        projectId: z.string().optional(),
+        entityId: z.string().optional(),
+        data: z.record(z.string(), z.unknown()).optional(),
+        confidence: z.number().min(0).max(1).optional(),
+        importance: z.number().min(0).max(1).optional(),
+        limit: z.number().int().min(1).max(200).optional(),
+      },
+    },
+    wrapJson((a) => {
+      const db = openDb();
+      try {
+        if (a.action === "add") {
+          return addObservation(db, {
+            type: (a.type ?? "USER_SIGNAL") as Parameters<
+              typeof addObservation
+            >[1]["type"],
+            source: a.source,
+            projectId: a.projectId,
+            entityId: a.entityId,
+            data: a.data,
+            confidence: a.confidence,
+            importance: a.importance,
+          });
+        }
+        return listObservations(db, {
+          type: a.type as never,
+          projectId: a.projectId,
+          limit: a.limit,
+        });
+      } finally {
+        db.close();
+      }
+    }),
+  );
+
+  server.registerTool(
+    "brain_opportunities",
+    {
+      title: "Brain Opportunities",
+      description: "Cria ou lista oportunidades derivadas de observacoes.",
+      inputSchema: {
+        action: z.enum(["add", "list"]).default("list"),
+        title: z.string().optional(),
+        description: z.string().optional(),
+        sourceObservationId: z.number().int().optional(),
+        goalId: z.string().optional(),
+        projectId: z.string().optional(),
+        potentialImpact: z.number().optional(),
+        estimatedEffort: z.number().optional(),
+        risk: z.number().optional(),
+        confidence: z.number().min(0).max(1).optional(),
+        status: z.string().optional(),
+        limit: z.number().int().min(1).max(100).optional(),
+      },
+    },
+    wrapJson((a) => {
+      const db = openDb();
+      try {
+        if (a.action === "add") {
+          if (!a.title) throw new ValidationError("title required for add");
+          return createOpportunity(db, {
+            title: a.title,
+            description: a.description,
+            sourceObservationId: a.sourceObservationId,
+            goalId: a.goalId,
+            project: a.projectId,
+            potentialImpact: a.potentialImpact,
+            estimatedEffort: a.estimatedEffort,
+            risk: a.risk,
+            confidence: a.confidence,
+          });
+        }
+        return listOpportunities(db, {
+          projectId: a.projectId,
+          limit: a.limit,
+        });
+      } finally {
+        db.close();
+      }
+    }),
+  );
+
+  server.registerTool(
+    "brain_initiatives",
+    {
+      title: "Brain Initiatives",
+      description:
+        "Gerencia iniciativas: create | list | score | plan | approve | reject. Aprovacao humana explicita; nada executa automaticamente nesta fase.",
+      inputSchema: {
+        action: z.enum(["create", "list", "score", "plan", "approve", "reject"]),
+        id: z.string().optional(),
+        title: z.string().optional(),
+        description: z.string().optional(),
+        goalId: z.string().optional(),
+        projectId: z.string().optional(),
+        hypothesisId: z.number().int().optional(),
+        impact: z.number().min(0).max(10).optional(),
+        probability: z.number().min(0).max(10).optional(),
+        effort: z.number().min(0).max(10).optional(),
+        risk: z.number().min(0).max(10).optional(),
+        expectedOutcome: z.string().optional(),
+        approvedBy: z.string().optional(),
+        rejectionReason: z.string().optional(),
+        tasks: z.array(z.string()).optional(),
+      },
+    },
+    wrapJson((a) => {
+      const db = openDb();
+      try {
+        switch (a.action) {
+          case "create": {
+            const init = createInitiative(db, {
+              title: a.title ?? "",
+              description: a.description,
+              goalId: a.goalId,
+              project: a.projectId,
+              hypothesisId: a.hypothesisId,
+              impact: a.impact,
+              probability: a.probability,
+              effort: a.effort,
+              risk: a.risk,
+              expectedOutcome: a.expectedOutcome,
+            });
+            updateInitiativeStatus(db, init.id, "AWAITING_APPROVAL");
+            return getInitiative(db, init.id);
+          }
+          case "list":
+            return listInitiatives(db);
+          case "score": {
+            if (!a.id) throw new ValidationError("id required for score");
+            const init = getInitiative(db, a.id);
+            return scoreInitiative(init);
+          }
+          case "plan": {
+            if (!a.id) throw new ValidationError("id required for plan");
+            return planInitiative(db, a.id, a.tasks);
+          }
+          case "approve": {
+            if (!a.id) throw new ValidationError("id required for approve");
+            updateInitiativeStatus(db, a.id, "APPROVED");
+            return approveInitiative(db, a.id, a.approvedBy ?? "human");
+          }
+          case "reject": {
+            if (!a.id) throw new ValidationError("id required for reject");
+            updateInitiativeStatus(db, a.id, "REJECTED");
+            rejectInitiativeApproval(db, a.id, a.rejectionReason ?? null, a.approvedBy ?? "human");
+            return getInitiative(db, a.id);
+          }
+          default:
+            throw new ValidationError("unknown action");
+        }
+      } finally {
+        db.close();
+      }
+    }),
+  );
+
+  server.registerTool(
+    "brain_proposals",
+    {
+      title: "Brain Proposals",
+      description:
+        "Proposta formatada para aprovacao humana: objetivo, hipotese, plano, agentes, skills, tools, custo, risco, score e motivo.",
+      inputSchema: { initiativeId: z.string().min(1) },
+    },
+    wrapJson((a: { initiativeId: string }) => ({
+      proposal: formatProposal(openDb(), loadConfigForTools(), a.initiativeId),
+    })),
+  );
+
+  server.registerTool(
+    "brain_next_actions",
+    {
+      title: "Brain Next Actions",
+      description:
+        "Responde 'o que deveriamos fazer agora?': objetivos ativos priorizados, observacoes recentes, iniciativas aguardando aprovacao e recomendacoes com motivos. OBSERVA/ANALISA/PROPOE — nao executa.",
+      inputSchema: {},
+    },
+    wrapJson(() => brainNextActions(loadConfigForTools())),
+  );
+
   return server;
+}
+
+function openDb() {
+  return new DatabaseSync(loadConfigForTools().dbPath);
 }
 
 function toolSearchMemories(a: { query?: string; entityId?: unknown; project?: unknown; kind?: unknown; category?: unknown; minImportance?: unknown; from?: unknown; to?: unknown; limit?: number }) {

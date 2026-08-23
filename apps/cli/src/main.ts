@@ -25,6 +25,15 @@ import {
   acceptObservation,
   rejectObservation,
 } from "../../../core/learning/learning-loop.ts";
+import { brainNextActions } from "../../../core/goals/proactive.ts";
+import {
+  listActiveGoalsByPriority,
+  createGoal,
+  getGoal,
+  goalPriority,
+  listGoals,
+} from "../../../core/goals/goal-engine.ts";
+import { formatProposal } from "../../../core/goals/initiatives.ts";
 import {
   applySchema,
   getMetadata,
@@ -520,6 +529,62 @@ learn
     });
   });
 
+program
+  .command("goals")
+  .description("lista objetivos ativos priorizados (score determinístico)")
+  .action(() => {
+    const config = loadConfigOrExit();
+    const result = withDatabase(config, (db) =>
+      listActiveGoalsByPriority(db, 10),
+    );
+    if (result.length === 0) {
+      process.stdout.write("(nenhum objetivo ativo — use o MCP brain_create_goal)\n");
+      return;
+    }
+    for (const g of result) {
+      process.stdout.write(
+        `${String(g.score).padStart(3)}  ${g.id}  ${g.name}` +
+          ` [${g.progressPct !== null ? g.progressPct + "%" : "sem métrica"}]\n` +
+          `      ${g.reasons.join("; ")}\n`,
+      );
+    }
+  });
+
+program
+  .command("next")
+  .description("o que deveríamos fazer agora? (objetivos + observações + iniciativas)")
+  .action(() => {
+    const config = loadConfigOrExit();
+    const na = brainNextActions(config);
+    process.stdout.write(
+      `OBJETIVOS ATIVOS (${na.goals.length}):\n` +
+        na.goals
+          .map((g) => `  • ${g.name} — ${g.progressPct ?? "?"}% (score ${g.score})`)
+          .join("\n") +
+        `\n\nRECOMENDAÇÕES:\n` +
+        (na.recommendations.map((r) => `  → [${r.kind}] ${r.title}\n     ${r.reason}`).join("\n") ||
+          "  (nenhuma recomendação no momento)") +
+        "\n",
+    );
+  });
+
+program
+  .command("propose <initiativeId>")
+  .description("gera proposta formatada da iniciativa para aprovação humana")
+  .action((initiativeId: string) => {
+    const config = loadConfigOrExit();
+    try {
+      const proposal = withDatabase(config, (database) =>
+        formatProposal(database, config, initiativeId),
+      );
+      process.stdout.write(proposal + "\n");
+    } catch (err) {
+      const brainErr = toBrainError(err);
+      process.stderr.write(`brain: [${brainErr.code}] ${brainErr.message}\n`);
+      process.exit(1);
+    }
+  });
+
 function runDoctor(): void {
   let failures = 0;
   const check = (name: string, ok: boolean, detail: string): void => {
@@ -587,6 +652,7 @@ function withDatabase<T>(config: ReturnType<typeof loadConfig>, fn: (db: ReturnT
   }
   const db = openDatabase(config.dbPath, { createDirs: false });
   try {
+    applySchema(db);
     return fn(db);
   } finally {
     db.close();

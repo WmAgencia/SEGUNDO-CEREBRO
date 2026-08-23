@@ -8,6 +8,7 @@ import type { ContextPackage } from "./context/context-package.ts";
 import { searchSkills } from "./skills/skill-engine.ts";
 import { resolveTools } from "./tools/tool-registry.ts";
 import { listAgents } from "./agents/agent-runtime.ts";
+import { brainNextActions, isProactiveQuery } from "./goals/proactive.ts";
 import type { AgentRecord } from "./agents/agent-runtime.ts";
 
 export interface UnifiedQueryInput {
@@ -29,6 +30,8 @@ export interface UnifiedResponse {
   procedures: ContextPackage["procedures"];
   relationships: ContextPackage["relationships"];
   skills: ReturnType<typeof searchSkills>;
+  goals: ReturnType<typeof brainNextActions>['goals'];
+  nextActions: ReturnType<typeof brainNextActions> | null;
   tools: ReturnType<typeof resolveTools>;
   agents: Array<Pick<AgentRecord, "id" | "name" | "domains">>;
   sources: ContextPackage["sources"];
@@ -56,6 +59,8 @@ export function unifiedQuery(
   let skills: UnifiedResponse["skills"] = { primary: [], supporting: [] };
   let tools: UnifiedResponse["tools"] = [];
   let agents: UnifiedResponse["agents"] = [];
+  let goals: UnifiedResponse["goals"] = [];
+  let nextActions: UnifiedResponse["nextActions"] = null;
   try {
     skills = searchSkills(db, input.query);
     const toolFilters: Parameters<typeof resolveTools>[2] = { limit: 5 };
@@ -84,6 +89,11 @@ export function unifiedQuery(
     db.prepare(
       `INSERT INTO events (event_type, subject, payload) VALUES ('unified.query', ?, ?)`,
     ).run(input.query.slice(0, 200), JSON.stringify({ intent: route.intent }));
+
+    goals = brainNextActions(config).goals;
+    if (isProactiveQuery(input.query)) {
+      nextActions = brainNextActions(config);
+    }
   } catch {
     warnings.push("skills/tools/agents indisponíveis nesta consulta");
   } finally {
@@ -102,6 +112,8 @@ export function unifiedQuery(
     procedures: pkg.procedures,
     relationships: pkg.relationships,
     skills,
+    goals,
+    nextActions,
     tools,
     agents,
     sources: pkg.sources,
