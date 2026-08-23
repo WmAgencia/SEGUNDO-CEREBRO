@@ -28,7 +28,7 @@ const goalSchema = {
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { toBrainError, ValidationError } from "../../core/errors/errors.ts";
+import { toBrainError, ValidationError, NotFoundError } from "../../core/errors/errors.ts";
 import {
   searchMemories,
   getMemory,
@@ -66,6 +66,20 @@ import {
   rejectInitiativeApproval,
   formatProposal,} from "../../core/goals/initiatives.ts";
 import { brainNextActions } from "../../core/goals/proactive.ts";
+import {
+  listPendingApprovals,
+  resolveApproval,
+  activityLog,
+  listAgentsFiltered,
+  agentPerformance,
+  createHandoff,
+  refreshQueue,
+} from "../../core/agents/agent-os.ts";
+import {
+  createTeam,
+  listTeams,
+  orchestrateCycle,
+} from "../../core/agents/orchestrator.ts";
 import {
   toolBrainContext,
   toolBrainGet,
@@ -112,6 +126,15 @@ export const TOOL_NAMES = [
   "brain_initiatives",
   "brain_proposals",
   "brain_next_actions",
+  "brain_agents",
+  "brain_agent",
+  "brain_teams",
+  "brain_task_queue",
+  "brain_assignments",
+  "brain_handoffs",
+  "brain_agent_activity",
+  "brain_approvals",
+  "brain_orchestrate",
 ] as const;
 
 function jsonResult(data: unknown) {
@@ -685,8 +708,247 @@ export function createBrainMcpServer(): McpServer {
     wrapJson(() => brainNextActions(loadConfigForTools())),
   );
 
+  server.registerTool(
+    "brain_agents",
+    {
+      title: "Brain Agents",
+      description:
+        "Lista agentes registrados com filtros por status, capability e projeto; availableOnly=true retorna só quem pode trabalhar.",
+      inputSchema: {
+        status: z.string().optional(),
+        capability: z.string().optional(),
+        projectId: z.string().optional(),
+        availableOnly: z.boolean().optional(),
+      },
+    },
+    wrapJson((a) => {
+      const db = openDb();
+      try {
+        return listAgentsFiltered(db, a);
+      } finally {
+        db.close();
+      }
+    }),
+  );
+
+  server.registerTool(
+    "brain_agent",
+    {
+      title: "Brain Agent",
+      description: "Detalhe de um agente + métricas de performance (tasks, retrabalho, bloqueios, duração média).",
+      inputSchema: { id: z.string().min(1) },
+    },
+    wrapJson((a: { id: string }) => {
+      const db = openDb();
+      try {
+        const agentRow = db.prepare("SELECT * FROM agents WHERE id = ?").get(a.id);
+        if (!agentRow) throw new NotFoundError(`agent not found: ${a.id}`);
+        return { agent: agentRow, performance: agentPerformance(db, a.id) };
+      } finally {
+        db.close();
+      }
+    }),
+  );
+
+  server.registerTool(
+    "brain_teams",
+    {
+      title: "Brain Teams",
+      description: "Cria ou lista equipes de agentes (members[], manager, capabilities, projects).",
+      inputSchema: {
+        action: z.enum(["create", "list"]).default("list"),
+        name: z.string().optional(),
+        description: z.string().optional(),
+        managerAgent: z.string().optional(),
+        members: z.array(z.string()).optional(),
+        capabilities: z.array(z.string()).optional(),
+        projects: z.array(z.string()).optional(),
+      },
+    },
+    wrapJson((a) => {
+      const db = openDb();
+      try {
+        if (a.action === "create") {
+          return createTeam(db, {
+            name: a.name ?? "",
+            description: a.description,
+            managerAgent: a.managerAgent,
+            members: a.members,
+            capabilities: a.capabilities,
+            projects: a.projects,
+          });
+        }
+        return listTeams(db);
+      } finally {
+        db.close();
+      }
+    }),
+  );
+
+  server.registerTool(
+    "brain_task_queue",
+    {
+      title: "Brain Task Queue",
+      description: "Fila operacional de uma iniciativa: tasks por estado (READY/ASSIGNED/RUNNING/BLOCKED/COMPLETED) respeitando dependências.",
+      inputSchema: { initiativeId: z.string().min(1) },
+    },
+    wrapJson((a: { initiativeId: string }) => {
+      const db = openDb();
+      try {
+        refreshQueue(db, a.initiativeId);
+        return db
+          .prepare(
+            `SELECT id, ordinal, title, status, assigned_agent, depends_on
+             FROM initiative_tasks WHERE initiative_id=? ORDER BY ordinal`,
+          )
+          .all(a.initiativeId);
+      } finally {
+        db.close();
+      }
+    }),
+  );
+
+  server.registerTool(
+    "brain_assignments",
+    {
+      title: "Brain Assignments",
+      description: "Atribuições (task→agente) de uma iniciativa ou de um agente, com motivo.",
+      inputSchema: { initiativeId: z.string().optional(), agentId: z.string().optional() },
+    },
+    wrapJson((a) => {
+      const db = openDb();
+      try {
+        const where: string[] = [];
+        const vals: Array<string | number> = [];
+        if (a.initiativeId) {
+          where.push("initiative_id = ?");
+          vals.push(a.initiativeId);
+        }
+        if (a.agentId) {
+          where.push("assigned_agent = ?");
+          vals.push(a.agentId);
+        }
+        return db
+          .prepare(
+            `SELECT * FROM task_assignments ${where.length ? "WHERE " + where.join(" AND ") : ""}
+             ORDER BY assigned_at DESC`,
+          )
+          .all(...vals);
+      } finally {
+        db.close();
+      }
+    }),
+  );
+
+  server.registerTool(
+    "brain_handoffs",
+    {
+      title: "Brain Handoffs",
+      description: "Cria ou lista handoffs entre agentes (resultado + contexto passado adiante).",
+      inputSchema: {
+        action: z.enum(["create", "list"]).default("list"),
+        fromAgent: z.string().optional(),
+        toAgent: z.string().optional(),
+        taskId: z.number().int().optional(),
+        initiativeId: z.string().optional(),
+        summary: z.string().optional(),
+        confidence: z.number().min(0).max(1).optional(),
+        limit: z.number().int().min(1).max(200).optional(),
+      },
+    },
+    wrapJson((a) => {
+      const db = openDb();
+      try {
+        if (a.action === "create") {
+          if (!a.fromAgent || !a.toAgent || !a.summary) {
+            throw new ValidationError("fromAgent, toAgent e summary são obrigatórios");
+          }
+          return createHandoff(db, {
+            fromAgent: a.fromAgent,
+            toAgent: a.toAgent,
+            taskId: a.taskId,
+            initiativeId: a.initiativeId,
+            summary: a.summary,
+            confidence: a.confidence,
+          });
+        }
+        return db
+          .prepare("SELECT * FROM handoffs ORDER BY created_at DESC LIMIT ?")
+          .all(Math.max(1, Math.min(200, a.limit ?? 50)));
+      } finally {
+        db.close();
+      }
+    }),
+  );
+
+  server.registerTool(
+    "brain_agent_activity",
+    {
+      title: "Brain Agent Activity",
+      description: "Histórico legível de eventos dos agentes (assigned/started/completed/handoff/review/approval).",
+      inputSchema: {
+        initiativeId: z.string().optional(),
+        limit: z.number().int().min(1).max(500).optional(),
+      },
+    },
+    wrapJson((a) => {
+      const db = openDb();
+      try {
+        void a;
+        return activityLog(db, { limit: a?.limit });
+      } finally {
+        db.close();
+      }
+    }),
+  );
+
+  server.registerTool(
+    "brain_approvals",
+    {
+      title: "Brain Approvals",
+      description: "Aprovações humanas: lista pendentes ou resolve (approve/reject) com autor e feedback.",
+      inputSchema: {
+        action: z.enum(["list", "approve", "reject"]).default("list"),
+        approvalId: z.number().int().optional(),
+        by: z.string().optional(),
+        feedback: z.string().optional(),
+      },
+    },
+    wrapJson((a) => {
+      const db = openDb();
+      try {
+        if (a.action === "list") {
+          return listPendingApprovals(db);
+        }
+        if (!a.approvalId) throw new ValidationError("approvalId required");
+        resolveApproval(db, a.approvalId, {
+          decision: a.action === "approve" ? "APPROVED" : "REJECTED",
+          by: a.by ?? "human",
+          feedback: a.feedback,
+        });
+        return { ok: true };
+      } finally {
+        db.close();
+      }
+    }),
+  );
+
+  server.registerTool(
+    "brain_orchestrate",
+    {
+      title: "Brain Orchestrate",
+      description:
+        "Executa um ciclo do orquestrador para uma iniciativa APPROVED: libera tasks prontas, atribui agentes disponíveis e reporta progresso/bloqueios.",
+      inputSchema: { initiativeId: z.string().min(1) },
+    },
+    wrapJson((a: { initiativeId: string }) =>
+      orchestrateCycle(loadConfigForTools(), { initiativeId: a.initiativeId }),
+    ),
+  );
+
   return server;
 }
+
 
 function openDb() {
   return new DatabaseSync(loadConfigForTools().dbPath);

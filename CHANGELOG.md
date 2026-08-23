@@ -1,5 +1,19 @@
 # SECOND BRAIN OS — CHANGELOG
 
+## V2.2.0 — Phase 19: Agent OS (2026-08-23)
+- Agent Model estendido (role/skills/tools/projects/goals/workload/capacity/metadata).
+- Agent Manager + Selector determinístico com score e reasons (capabilities, skills, tools, projeto, workload).
+- Dispatcher + Task Queue operacional (PENDING→READY→ASSIGNED→RUNNING→WAITING/BLOCKED→COMPLETED) respeitando dependências.
+- Work Sessions, Handoffs (CREATED/ACCEPTED/COMPLETED), Messages (REQUEST..REVIEW), Blockers com required_input/approval.
+- Results com validação determinística, Review (approve/reject), Rework com histórico preservado e MAX_RETRIES=3 → escalonamento humano.
+- Approvals humanas (PENDING/RESOLVED) integradas a review.
+- Orchestrator Cycle persistido: libera, atribui, mede progresso, completa iniciativa; Teams c/ dispatch round-robin.
+- Goal Feedback (reportOutcome atualiza current_value e gera METRIC_CHANGE), Agent Performance, Activity Log.
+- MCP: +9 tools (total 36): brain_agents, brain_agent, brain_teams, brain_task_queue, brain_assignments, brain_handoffs, brain_agent_activity, brain_approvals, brain_orchestrate.
+- Schema v5: teams, task_assignments, work_sessions, handoffs, agent_messages, approvals, agent_results + colunas novas em agents/initiative_tasks.
+
+# SECOND BRAIN OS — CHANGELOG
+
 ## V2.1.0 — Phase 18: Goal & Initiative Engine (2026-08-23)
 - **Goal Engine**: CRUD de objetivos (8 tipos, 7 status, hierarquia
   GOAL→SUBGOAL via parent_goal_id, métricas com progresso determinístico),

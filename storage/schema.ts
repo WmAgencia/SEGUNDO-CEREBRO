@@ -1,10 +1,118 @@
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 
 export interface Migration {
   from: number;
   statements: readonly string[];
 }
 
+const PHASE19_DDL: readonly string[] = [
+  `CREATE TABLE IF NOT EXISTS teams (
+    id            TEXT PRIMARY KEY,
+    name          TEXT NOT NULL,
+    description   TEXT NOT NULL DEFAULT '',
+    manager_agent TEXT,
+    members       TEXT NOT NULL DEFAULT '[]',
+    capabilities  TEXT NOT NULL DEFAULT '[]',
+    projects      TEXT NOT NULL DEFAULT '[]',
+    metadata      TEXT NOT NULL DEFAULT '{}',
+    created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  )`,
+  `CREATE TABLE IF NOT EXISTS task_assignments (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id        INTEGER NOT NULL REFERENCES initiative_tasks(id),
+    initiative_id  TEXT NOT NULL REFERENCES initiatives(id),
+    assigned_agent TEXT NOT NULL REFERENCES agents(id),
+    reason         TEXT NOT NULL DEFAULT '',
+    priority       REAL NOT NULL DEFAULT 50,
+    status         TEXT NOT NULL DEFAULT 'ACTIVE',
+    assigned_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  )`,
+  `CREATE TABLE IF NOT EXISTS work_sessions (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    agent_id      TEXT NOT NULL REFERENCES agents(id),
+    task_id       INTEGER NOT NULL REFERENCES initiative_tasks(id),
+    initiative_id TEXT NOT NULL,
+    started_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    ended_at      TEXT,
+    status        TEXT NOT NULL DEFAULT 'RUNNING',
+    inputs        TEXT NOT NULL DEFAULT '{}',
+    outputs       TEXT NOT NULL DEFAULT '{}',
+    errors        TEXT NOT NULL DEFAULT '[]',
+    metrics       TEXT NOT NULL DEFAULT '{}'
+  )`,
+  `CREATE TABLE IF NOT EXISTS handoffs (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    from_agent    TEXT NOT NULL,
+    to_agent      TEXT NOT NULL,
+    task_id       INTEGER REFERENCES initiative_tasks(id),
+    initiative_id TEXT,
+    summary       TEXT NOT NULL DEFAULT '',
+    payload       TEXT NOT NULL DEFAULT '{}',
+    sources       TEXT NOT NULL DEFAULT '[]',
+    confidence    REAL NOT NULL DEFAULT 0.8,
+    status        TEXT NOT NULL DEFAULT 'CREATED',
+    created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  )`,
+  `CREATE TABLE IF NOT EXISTS agent_messages (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    from_agent    TEXT NOT NULL,
+    to_agent      TEXT NOT NULL,
+    type          TEXT NOT NULL,
+    subject       TEXT NOT NULL DEFAULT '',
+    context_data  TEXT NOT NULL DEFAULT '{}',
+    message       TEXT NOT NULL DEFAULT '',
+    attachments   TEXT NOT NULL DEFAULT '[]',
+    task_id       INTEGER,
+    initiative_id TEXT,
+    created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  )`,
+  `CREATE TABLE IF NOT EXISTS approvals (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id       INTEGER REFERENCES initiative_tasks(id),
+    initiative_id TEXT,
+    agent_id      TEXT,
+    type          TEXT NOT NULL DEFAULT 'OTHER',
+    payload       TEXT NOT NULL DEFAULT '{}',
+    reason        TEXT NOT NULL DEFAULT '',
+    status        TEXT NOT NULL DEFAULT 'PENDING',
+    created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    resolved_at   TEXT,
+    resolved_by   TEXT,
+    decision      TEXT,
+    feedback      TEXT
+  )`,
+  `CREATE TABLE IF NOT EXISTS agent_results (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id        INTEGER NOT NULL REFERENCES initiative_tasks(id),
+    session_id     INTEGER,
+    agent_id       TEXT NOT NULL,
+    status         TEXT NOT NULL DEFAULT 'VALID',
+    summary        TEXT NOT NULL DEFAULT '',
+    output         TEXT NOT NULL DEFAULT '',
+    artifacts      TEXT NOT NULL DEFAULT '[]',
+    sources        TEXT NOT NULL DEFAULT '[]',
+    confidence     REAL NOT NULL DEFAULT 0.8,
+    metrics        TEXT NOT NULL DEFAULT '{}',
+    next_recommended_action TEXT,
+    review_status  TEXT NOT NULL DEFAULT 'PENDING',
+    review_feedback TEXT,
+    rework_of      INTEGER REFERENCES agent_results(id),
+    rework_count   INTEGER NOT NULL DEFAULT 0,
+    created_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  )`,
+];
+
+const PHASE19_MIGRATIONS: readonly string[] = [
+  "ALTER TABLE agents ADD COLUMN role TEXT NOT NULL DEFAULT 'specialist'",
+  "ALTER TABLE agents ADD COLUMN skills TEXT NOT NULL DEFAULT '[]'",
+  "ALTER TABLE agents ADD COLUMN tools TEXT NOT NULL DEFAULT '[]'",
+  "ALTER TABLE agents ADD COLUMN projects TEXT NOT NULL DEFAULT '[]'",
+  "ALTER TABLE agents ADD COLUMN goals TEXT NOT NULL DEFAULT '[]'",
+  "ALTER TABLE agents ADD COLUMN workload INTEGER NOT NULL DEFAULT 0",
+  "ALTER TABLE agents ADD COLUMN capacity INTEGER NOT NULL DEFAULT 3",
+  "ALTER TABLE agents ADD COLUMN metadata TEXT NOT NULL DEFAULT '{}'",
+  ...PHASE19_DDL,
+];
 
 const PHASE18_DDL: readonly string[] = [
    `CREATE TABLE IF NOT EXISTS goals (
@@ -96,6 +204,8 @@ const PHASE18_DDL: readonly string[] = [
      depends_on    INTEGER,
      assigned_agent TEXT,
      required_tools TEXT NOT NULL DEFAULT '[]',
+     priority      REAL,
+     updated_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
      status        TEXT NOT NULL DEFAULT 'PENDING'
    )`,
    "CREATE INDEX IF NOT EXISTS idx_init_tasks ON initiative_tasks(initiative_id)",
@@ -131,10 +241,15 @@ export const MIGRATIONS: readonly Migration[] = [
     from: 3,
     statements: PHASE18_DDL,
   },
+  {
+    from: 4,
+    statements: PHASE19_MIGRATIONS,
+  },
 ];
 
 export const SCHEMA_STATEMENTS: readonly string[] = [
   ...PHASE18_DDL,
+  ...PHASE19_DDL,
   `CREATE TABLE IF NOT EXISTS index_metadata (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -257,10 +372,18 @@ export const SCHEMA_STATEMENTS: readonly string[] = [
     id           TEXT PRIMARY KEY,
     name         TEXT NOT NULL,
     description  TEXT NOT NULL DEFAULT '',
+    role         TEXT NOT NULL DEFAULT 'specialist',
     domains      TEXT NOT NULL DEFAULT '[]',
     capabilities TEXT NOT NULL DEFAULT '[]',
+    skills       TEXT NOT NULL DEFAULT '[]',
+    tools        TEXT NOT NULL DEFAULT '[]',
+    projects     TEXT NOT NULL DEFAULT '[]',
+    goals        TEXT NOT NULL DEFAULT '[]',
     permissions  TEXT NOT NULL DEFAULT '[]',
     status       TEXT NOT NULL DEFAULT 'active',
+    workload     INTEGER NOT NULL DEFAULT 0,
+    capacity     INTEGER NOT NULL DEFAULT 3,
+    metadata     TEXT NOT NULL DEFAULT '{}',
     created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
   )`,
 
