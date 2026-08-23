@@ -27,6 +27,7 @@ OBSIDIAN ──→ INDEXER ──→ SQLITE(+FTS5) ──→ SEARCH+GRAPH ──
 | 6 | MCP server (10 ferramentas) | ✅ concluída |
 | 7 | Integração OpenCode (`docs/opencode.md`) | ✅ concluída — sessão real validada (agente `brain`, modelo free Zen) |
 | 8 | IA local (llama.cpp + Qwen 3) | ✅ concluída — `ai:status`, `ai:extract` c/ confirmação |
+| 9–17 | **V2**: Memory Engine, Context Package, Agent Runtime, Tool Registry, Skills, Learning Loop, Research, Project Intelligence, Unified API (`brain_query`) | ✅ concluídas — 19 MCP tools, schema v3 |
 
 > ⚠️ Disco C: com <1 GB livre — libere espaço antes de instalar qualquer coisa nova.
 

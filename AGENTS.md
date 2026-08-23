@@ -56,8 +56,14 @@ npm run cli -- index # brain index
 
 ## Estado atual do projeto
 
-**V1 COMPLETA (FASES 0–8).** Ver README para tabela de status e docs/ para
-detalhes de cada fase.
+**V2 COMPLETA (FASES 0–17).** V1 (0–8) + V2 (9–17): memory engine, context
+package, agent runtime, tool registry, skills intelligence, learning loop,
+research engine, project intelligence, unified API (`brain_query`).
+19 ferramentas MCP. Schema v3. 153 testes. Docs: `docs/v2.md`, `CHANGELOG.md`.
+Git: 2 commits locais (v1.0.0, v2.0.0); remote `WmAgencia/SEGUNDO-CEREBRO`
+configurado mas PUSH BLOQUEADO por credencial (máquina autentica como
+`consecomclipcon-design`) — resolver com `git credential-manager github login`
+na conta WmAgencia ou adicionar colaborador, depois `git push origin main`.
 
 - FASE 0 concluída (ver `docs/environment.md`).
 - FASE 1 concluída: schema SQLite, config, logger, erros, CLI base.
