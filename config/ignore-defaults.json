@@ -1,0 +1,14 @@
+{
+  "$comment": "Ignorados pelo indexador SEMPRE, além do conteúdo de .brainignore do vault.",
+  "always": [
+    ".env",
+    ".env.*",
+    "**/*.pem",
+    "**/*.key",
+    "**/secrets/**",
+    "**/credentials/**",
+    ".obsidian/**",
+    ".trash/**",
+    "_system/indexes/**"
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "$comment": "Second Brain OS - configuracao padrao. Env sobrepoe: SECOND_BRAIN_VAULT, SECOND_BRAIN_DATA_DIR, SECOND_BRAIN_LOG_LEVEL.",
+  "vaultPath": null,
+  "dataDir": "data",
+  "dbName": "brain.db",
+  "logLevel": "info",
+  "search": {
+    "defaultLimit": 10,
+    "maxLimit": 50
+  },
+  "context": {
+    "maxChars": 12000,
+    "defaultDepth": 1,
+    "maxDepth": 3
+  },
+  "ai": {
+    "baseUrl": "http://127.0.0.1:11434",
+    "model": "qwen3-1.7b"
+  }
+}

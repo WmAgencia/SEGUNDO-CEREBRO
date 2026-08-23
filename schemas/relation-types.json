@@ -1,0 +1,22 @@
+{
+  "$comment": "Tipos de relação conhecidos pela V1. A lista é aberta: novos tipos são aceitos sem migração.",
+  "version": 1,
+  "types": [
+    "LINKS_TO",
+    "RELATED_TO",
+    "PART_OF",
+    "HAS_FEATURE",
+    "USES",
+    "DEPENDS_ON",
+    "CREATED_BY",
+    "OWNED_BY",
+    "DECIDED_FOR",
+    "SOLVES",
+    "CONTRADICTS",
+    "SUPERSEDES",
+    "DERIVED_FROM",
+    "COLLABORATES_WITH",
+    "WORKS_AT",
+    "MENTIONS"
+  ]
+}

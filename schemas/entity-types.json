@@ -1,0 +1,32 @@
+{
+  "$comment": "Tipos de entidade da V1. A lista é aberta: o schema aceita novos tipos sem migração.",
+  "version": 1,
+  "types": [
+    "project",
+    "idea",
+    "knowledge",
+    "decision",
+    "procedure",
+    "person",
+    "company",
+    "product",
+    "system",
+    "concept",
+    "problem",
+    "goal",
+    "research",
+    "event",
+    "source"
+  ],
+  "idFormat": "<type>.<slug>[.<subslug>]",
+  "idRules": {
+    "lowercase": true,
+    "separator": ".",
+    "slugCharset": "a-z0-9-",
+    "examples": [
+      "project.vyntra",
+      "idea.shared-agent-memory",
+      "decision.vyntra.campaign-sequence"
+    ]
+  }
+}
