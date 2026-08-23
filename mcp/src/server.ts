@@ -1,6 +1,21 @@
+import { DatabaseSync } from "node:sqlite";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { toBrainError } from "../../core/errors/errors.ts";
+import {
+  searchMemories,
+  getMemory,
+  relatedMemories,
+} from "../../core/memory/memory-engine.ts";
+import { resolveTools } from "../../core/tools/tool-registry.ts";
+import { searchSkills } from "../../core/skills/skill-engine.ts";
+import {
+  agentContext,
+  listAgents,
+} from "../../core/agents/agent-runtime.ts";
+import { getProjectIntelligence } from "../../core/projects/project-intelligence.ts";
+import { unifiedQuery } from "../../core/unified.ts";
+import { observe } from "../../core/learning/learning-loop.ts";
 import {
   toolBrainContext,
   toolBrainGet,
@@ -13,6 +28,9 @@ import {
   toolBrainSources,
   toolBrainTimeline,
 } from "./tools.ts";
+
+import { loadConfigForTools } from "./tools.ts";
+import { seedBrainTools } from "../../core/tools/tool-registry.ts";
 
 const MEMORY_KINDS = ["episodic", "semantic", "procedural", "decision", "relational"] as const;
 
@@ -27,6 +45,15 @@ export const TOOL_NAMES = [
   "brain_remember",
   "brain_link",
   "brain_health",
+  "brain_search_memory",
+  "brain_get_memory",
+  "brain_related_memories",
+  "brain_search_tools",
+  "brain_search_skills",
+  "brain_agent_context",
+  "brain_project",
+  "brain_observe",
+  "brain_query",
 ] as const;
 
 function jsonResult(data: unknown) {
@@ -205,5 +232,236 @@ export function createBrainMcpServer(): McpServer {
     wrapJson(toolBrainHealth),
   );
 
+  server.registerTool(
+    "brain_search_memory",
+    {
+      title: "Brain Search Memory",
+      description: "Busca memorias (episodica, semantica, decision, etc) por texto, entidade, projeto, tipo, categoria e importancia minima.",
+      inputSchema: {
+        query: z.string().optional(),
+        entityId: z.string().optional(),
+        project: z.string().optional(),
+        kind: z.enum(["episodic", "semantic", "procedural", "decision", "relational"]).optional(),
+        category: z.string().optional(),
+        minImportance: z.number().min(0).max(1).optional(),
+        from: z.string().optional(),
+        to: z.string().optional(),
+        limit: z.number().int().min(1).max(100).optional(),
+      },
+    },
+    wrapJson((a: { query?: string; limit?: number } & Record<string, unknown>) =>
+      toolSearchMemories(a),
+    ),
+  );
+
+  server.registerTool("brain_get_memory", {
+      title: "Brain Get Memory",
+      description: "Retorna uma memoria pelo id (incrementa contador de acesso).",
+      inputSchema: { id: z.number().int() },
+    },
+    wrapJson((a: { id: number }) => toolGetMemory(a)),
+  );
+
+  server.registerTool(
+    "brain_related_memories",
+    {
+      title: "Brain Related Memories",
+      description: "Memorias ligadas a uma entidade ou projeto.",
+      inputSchema: {
+        entityId: z.string().min(1),
+        limit: z.number().int().min(1).max(100).optional(),
+      },
+    },
+    wrapJson((a: { entityId: string; limit?: number }) =>
+      toolRelatedMemories(a),
+    ),
+  );
+
+  server.registerTool(
+    "brain_search_tools",
+    {
+      title: "Brain Search Tools",
+      description: "Descobre ferramentas registradas relevantes para uma tarefa, com score, permissoes e disponibilidade.",
+      inputSchema: {
+        task: z.string().min(1),
+        requirePermission: z.enum(["READ", "WRITE", "EXECUTE", "DELETE", "NETWORK", "ADMIN"]).optional(),
+        limit: z.number().int().min(1).max(20).optional(),
+      },
+    },
+    wrapJson((a: { task: string; requirePermission?: "READ" | "WRITE" | "EXECUTE" | "DELETE" | "NETWORK" | "ADMIN"; limit?: number }) =>
+      toolSearchTools(a),
+    ),
+  );
+
+  server.registerTool(
+    "brain_search_skills",
+    {
+      title: "Brain Search Skills",
+      description: "Recomenda skills para uma tarefa com budget primary/supporting (3/3 default), provenance e razao.",
+      inputSchema: {
+        task: z.string().min(1),
+        primary: z.number().int().min(1).max(5).optional(),
+        supporting: z.number().int().min(0).max(8).optional(),
+      },
+    },
+    wrapJson((a: { task: string; primary?: number; supporting?: number }) =>
+      toolSearchSkills(a),
+    ),
+  );
+
+  server.registerTool(
+    "brain_agent_context",
+    {
+      title: "Brain Agent Context",
+      description: "Context Package autorizado para um agente registrado (checa permissao context e status active).",
+      inputSchema: {
+        agentId: z.string().min(1),
+        task: z.string().min(1),
+        project: z.string().optional(),
+        entity: z.string().optional(),
+        depth: z.number().int().min(1).max(5).optional(),
+        maxChars: z.number().int().min(100).optional(),
+      },
+    },
+    wrapJson((a: { agentId: string; task: string; project?: string; entity?: string; depth?: number; maxChars?: number }) =>
+      toolAgentContext(a),
+    ),
+  );
+
+  server.registerTool(
+    "brain_project",
+    {
+      title: "Brain Project Intelligence",
+      description: "Intelligence de projeto: relacionados por tipo, decisoes, procedimentos, memorias, skills, tools, timeline e relacoes entre projetos.",
+      inputSchema: { id: z.string().min(1) },
+    },
+    wrapJson((a: { id: string }) => toolProject(a)),
+  );
+
+  server.registerTool(
+    "brain_observe",
+    {
+      title: "Brain Observe",
+      description: "Registra observacao do learning loop; repeticoes viram candidates de aprendizado (governanca via CLI brain learn).",
+      inputSchema: {
+        observationType: z.string().min(1),
+        subject: z.string().min(1),
+        patternKey: z.string().optional(),
+        threshold: z.number().int().min(1).optional(),
+        payload: z.record(z.string(), z.unknown()).optional(),
+      },
+    },
+    wrapJson((a: { observationType: string; subject: string; patternKey?: string; threshold?: number; payload?: Record<string, unknown> }) =>
+      toolObserve(a),
+    ),
+  );
+
+  server.registerTool(
+    "brain_query",
+    {
+      title: "Brain Query (Unified)",
+      description:
+        "Interface unificada da V2: dado 'tenho que executar X', retorna intencao, entidades, contexto completo, memorias, decisoes, procedures, skills recomendadas, ferramentas e agentes apropriados.",
+      inputSchema: {
+        query: z.string().min(1),
+        agentId: z.string().optional(),
+        depth: z.number().int().min(1).max(5).optional(),
+        maxChars: z.number().int().min(100).optional(),
+      },
+    },
+    wrapJson((a: { query: string; agentId?: string; depth?: number; maxChars?: number }) =>
+      toolUnifiedQuery(a),
+    ),
+  );
+
   return server;
+}
+
+function toolSearchMemories(a: { query?: string; entityId?: unknown; project?: unknown; kind?: unknown; category?: unknown; minImportance?: unknown; from?: unknown; to?: unknown; limit?: number }) {
+  const db = new DatabaseSync(loadConfigForTools().dbPath);
+  try {
+    return searchMemories(db, {
+      text: typeof a.query === "string" ? a.query : undefined,
+      entityId: typeof a.entityId === "string" ? a.entityId : undefined,
+      project: typeof a.project === "string" ? a.project : undefined,
+      kind: typeof a.kind === "string" ? a.kind : undefined,
+      category: typeof a.category === "string" ? a.category : undefined,
+      minImportance: typeof a.minImportance === "number" ? a.minImportance : undefined,
+      from: typeof a.from === "string" ? a.from : undefined,
+      to: typeof a.to === "string" ? a.to : undefined,
+      limit: a.limit,
+    });
+  } finally {
+    db.close();
+  }
+}
+
+function toolGetMemory(a: { id: number }) {
+  const db = new DatabaseSync(loadConfigForTools().dbPath);
+  try {
+    return getMemory(db, a.id);
+  } finally {
+    db.close();
+  }
+}
+
+function toolRelatedMemories(a: { entityId: string; limit?: number }) {
+  const db = new DatabaseSync(loadConfigForTools().dbPath);
+  try {
+    return relatedMemories(db, a.entityId, a.limit ?? 10);
+  } finally {
+    db.close();
+  }
+}
+
+function toolSearchTools(a: { task: string; requirePermission?: "READ" | "WRITE" | "EXECUTE" | "DELETE" | "NETWORK" | "ADMIN"; limit?: number }) {
+  const db = new DatabaseSync(loadConfigForTools().dbPath);
+  try {
+    seedIfEmpty(db);
+    return resolveTools(db, a.task, {
+      requirePermission: a.requirePermission,
+      limit: a.limit ?? 5,
+    });
+  } finally {
+    db.close();
+  }
+}
+
+function toolSearchSkills(a: { task: string; primary?: number; supporting?: number }) {
+  const db = new DatabaseSync(loadConfigForTools().dbPath);
+  try {
+    return searchSkills(db, a.task, { primary: a.primary, supporting: a.supporting });
+  } finally {
+    db.close();
+  }
+}
+
+function toolAgentContext(a: { agentId: string; task: string; project?: string; entity?: string; depth?: number; maxChars?: number }) {
+  return agentContext(loadConfigForTools(), a);
+}
+
+function toolProject(a: { id: string }) {
+  return getProjectIntelligence(loadConfigForTools(), a.id);
+}
+
+function toolObserve(a: { observationType: string; subject: string; patternKey?: string; threshold?: number; payload?: Record<string, unknown> }) {
+  const db = new DatabaseSync(loadConfigForTools().dbPath);
+  try {
+    return observe(db, a);
+  } finally {
+    db.close();
+  }
+}
+
+function toolUnifiedQuery(a: { query: string; agentId?: string; depth?: number; maxChars?: number }) {
+  return unifiedQuery(loadConfigForTools(), a);
+}
+
+function seedIfEmpty(db: DatabaseSync): void {
+  const row = db.prepare("SELECT COUNT(*) AS c FROM tools_registry").get() as {
+    c: number;
+  };
+  if ((row?.c ?? 0) === 0) {
+    seedBrainTools(db);
+  }
 }

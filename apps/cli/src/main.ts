@@ -19,6 +19,12 @@ import { ask } from "../../../core/orchestrator/brain-orchestrator.ts";
 import { LocalLlamaCppProvider } from "../../../core/ai/llamacpp-provider.ts";
 import { extractMemoryProposals } from "../../../core/ai/memory-extractor.ts";
 import { saveConfirmedMemory } from "../../../core/ai/save-memory.ts";
+import { getProjectIntelligence } from "../../../core/projects/project-intelligence.ts";
+import {
+  listCandidates,
+  acceptObservation,
+  rejectObservation,
+} from "../../../core/learning/learning-loop.ts";
 import {
   applySchema,
   getMetadata,
@@ -444,6 +450,74 @@ program
       process.stderr.write(`brain: [${brainErr.code}] ${brainErr.message}\n`);
       process.exit(1);
     }
+  });
+
+program
+  .command("project <id>")
+  .description("intelligence de um projeto: relacionados, decisões, skills, tools, timeline")
+  .option("--json", "saída em JSON")
+  .action((id: string, opts: { json?: boolean }) => {
+    const config = loadConfigOrExit();
+    try {
+      const pi = getProjectIntelligence(config, id);
+      if (opts.json) {
+        process.stdout.write(JSON.stringify(pi, null, 2) + "\n");
+        return;
+      }
+      process.stdout.write(
+        `# PROJETO: ${pi.entity.id} (${pi.entity.status ?? "sem status"})\n` +
+          `decisões: ${pi.decisions.map((d) => d.id).join(", ") || "-"}\n` +
+          `procedimentos: ${pi.procedures.map((p) => p.id).join(", ") || "-"}\n` +
+          `projetos relacionados: ${pi.projectRelations.map((r) => `${r.otherProject} [${r.relation}]`).join(", ") || "-"}\n` +
+          `skills primary: ${pi.skills.primary.map((s) => s.id).join(", ") || "-"}\n` +
+          `memórias: ${pi.memories.length} | timeline: ${pi.timeline.length}\n`,
+      );
+    } catch (err) {
+      const brainErr = toBrainError(err);
+      process.stderr.write(`brain: [${brainErr.code}] ${brainErr.message}\n`);
+      process.exit(1);
+    }
+  });
+
+const learn = program.command("learn").description("governança do learning loop");
+
+learn
+  .command("list")
+  .description("lista observações e candidates de aprendizado")
+  .action(() => {
+    const config = loadConfigOrExit();
+    const result = withDatabase(config, (database) => listCandidates(database));
+    if (result.length === 0) {
+      process.stdout.write("(nenhuma observação)\n");
+      return;
+    }
+    for (const o of result) {
+      process.stdout.write(
+        `#${o.id} [${o.status}] x${o.count} (${o.observationType}) ${o.subject?.slice(0, 80)}\n`,
+      );
+    }
+  });
+
+learn
+  .command("accept <id>")
+  .description("aceita um candidate (promove a aprendizado)")
+  .action((idStr: string) => {
+    const config = loadConfigOrExit();
+    withDatabase(config, (database) => {
+      const o = acceptObservation(database, Number(idStr));
+      process.stdout.write(`#${o.id} aceito.\n`);
+    });
+  });
+
+learn
+  .command("reject <id>")
+  .description("rejeita um candidate")
+  .action((idStr: string) => {
+    const config = loadConfigOrExit();
+    withDatabase(config, (database) => {
+      const o = rejectObservation(database, Number(idStr));
+      process.stdout.write(`#${o.id} rejeitado.\n`);
+    });
   });
 
 function runDoctor(): void {

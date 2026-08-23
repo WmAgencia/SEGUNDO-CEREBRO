@@ -381,7 +381,11 @@ export function toolBrainHealth(): unknown {
           (SELECT COUNT(*) FROM entities)  AS entities,
           (SELECT COUNT(*) FROM relations) AS relations,
           (SELECT COUNT(*) FROM memories)  AS memories,
-          (SELECT COUNT(*) FROM events)    AS events`,
+          (SELECT COUNT(*) FROM events)    AS events,
+          (SELECT COUNT(*) FROM skills WHERE status='active')     AS skills,
+          (SELECT COUNT(*) FROM tools_registry WHERE available=1) AS tools,
+          (SELECT COUNT(*) FROM agents WHERE status='active')     AS agents,
+          (SELECT COUNT(*) FROM observations WHERE status='candidate') AS learning_candidates`,
       )
       .get() as Record<string, number>;
     const metaRows = db
