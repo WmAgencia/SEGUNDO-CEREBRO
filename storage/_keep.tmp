@@ -1,0 +1,7 @@
+export const SCHEMA_VERSION = 6;
+
+export interface Migration {
+  from: number;
+  statements: readonly string[];
+}
+

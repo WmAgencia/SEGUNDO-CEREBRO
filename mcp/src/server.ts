@@ -44,6 +44,21 @@ import { getProjectIntelligence } from "../../core/projects/project-intelligence
 import { unifiedQuery } from "../../core/unified.ts";
 import { observe } from "../../core/learning/learning-loop.ts";
 import {
+  requestExecution,
+  runAuthorizedExecution,
+  listExecutions,
+} from "../../core/exec/execution-engine.ts";
+import { LocalExecutor } from "../../core/exec/executor.ts";
+import { redactSecrets } from "../../core/exec/redact.ts";
+import {
+  startCollaboration,
+  postCollaborationMessage,
+  resolveCollaboration,
+  createDecision,
+  listCollaborationMessages,
+} from "../../core/collab/collaboration.ts";
+import { buildConsultationContext, OpenAICompatProvider } from "../../core/collab/external-ai.ts";
+import {
   createGoal,
   getGoal,
   updateGoal,
@@ -135,6 +150,11 @@ export const TOOL_NAMES = [
   "brain_agent_activity",
   "brain_approvals",
   "brain_orchestrate",
+  "brain_execute",
+  "brain_executions",
+  "brain_collaborate",
+  "brain_consult_external",
+  "brain_decisions",
 ] as const;
 
 function jsonResult(data: unknown) {
@@ -946,9 +966,162 @@ export function createBrainMcpServer(): McpServer {
     ),
   );
 
+  server.registerTool(
+    "brain_execute",
+    {
+      title: "Brain Execute",
+      description:
+        "Executa uma tool registrada respeitando política de risco, permissões e approval gate. HIGH/CRITICAL requerem aprovação humana.",
+      inputSchema: {
+        agentId: z.string().min(1),
+        toolId: z.string().min(1),
+        taskId: z.number().int().optional(),
+        initiativeId: z.string().optional(),
+        params: z.record(z.string(), z.unknown()).optional(),
+        idempotencyKey: z.string().optional(),
+        timeoutMs: z.number().int().min(1000).max(300000).optional(),
+        run: z.boolean().default(true).describe("executar imediatamente se ALLOWED"),
+      },
+    },
+    wrapJson(async (a) => {
+      const config0 = loadConfigForTools();
+      const localExecutor = new LocalExecutor();
+      localExecutor.register("brain_search", async (input) => {
+        const result = toolSearchMemories({ query: String(input.query ?? "") });
+        return { output: JSON.stringify(result), summary: "busca executada" };
+      });
+      const req = requestExecution(config0, localExecutor, {
+        agentId: a.agentId,
+        toolId: a.toolId,
+        taskId: a.taskId,
+        initiativeId: a.initiativeId,
+        params: (a.params as Record<string, unknown>) ?? {},
+        idempotencyKey: a.idempotencyKey,
+        timeoutMs: a.timeoutMs,
+      });
+      if (req.duplicate) return { ...req, note: "idempotência: execução anterior retornada" };
+      if (!a.run || req.status !== "AUTHORIZED") return req;
+      const execDb = new DatabaseSync(config0.dbPath);
+      try {
+        return runAuthorizedExecution(config0, localExecutor, req.id);
+      } finally {
+        execDb.close();
+      }
+    }),
+  );
+
+  server.registerTool(
+    "brain_executions",
+    {
+      title: "Brain Executions",
+      description: "Lista execuções de tools com filtros por agente/iniciativa/status.",
+      inputSchema: {
+        agentId: z.string().optional(),
+        initiativeId: z.string().optional(),
+        status: z.string().optional(),
+        limit: z.number().int().min(1).max(100).optional(),
+      },
+    },
+    wrapJson((a: { agentId?: string; initiativeId?: string; status?: string; limit?: number }) =>
+      listExecutions(loadConfigForTools(), a),
+    ),
+  );
+
+  server.registerTool(
+    "brain_collaborate",
+    {
+      title: "Brain Collaborate",
+      description:
+        "Colaboração estruturada multi-agente: start, message, decision, resolve.",
+      inputSchema: {
+        action: z.enum(["start", "message", "decision", "resolve"]),
+        topic: z.string().optional(),
+        objective: z.string().optional(),
+        participants: z.array(z.string()).optional(),
+        sessionId: z.number().int().optional(),
+        fromParticipant: z.string().optional(),
+        toParticipant: z.string().optional(),
+        type: z.enum(["QUESTION", "ANSWER", "PROPOSAL", "COUNTERARGUMENT", "REVIEW", "EVIDENCE"]).optional(),
+        content: z.record(z.string(), z.unknown()).optional(),
+        question: z.string().optional(),
+        options: z.array(z.string()).optional(),
+        selectedOption: z.string().optional(),
+        reasons: z.array(z.string()).optional(),
+        decidedBy: z.string().optional(),
+      },
+    },
+    wrapJson((a) => {
+      const db = openDb();
+      try {
+        switch (a.action) {
+          case "start":
+            return startCollaboration(db, { topic: a.topic ?? "", objective: a.objective, participants: a.participants });
+          case "message":
+            if (!a.sessionId || !a.fromParticipant || !a.type)
+              throw new ValidationError("sessionId, fromParticipant e type são obrigatórios");
+            return postCollaborationMessage(db, {
+              sessionId: a.sessionId, fromParticipant: a.fromParticipant,
+              toParticipant: a.toParticipant, type: a.type, content: a.content,
+            });
+          case "decision":
+            return createDecision(db, {
+              sessionId: a.sessionId, question: a.question ?? "",
+              options: a.options, selectedOption: a.selectedOption,
+              participants: a.participants, reasons: a.reasons,
+              decidedBy: a.decidedBy,
+            });
+          case "resolve":
+            if (!a.sessionId) throw new ValidationError("sessionId required");
+            resolveCollaboration(db, a.sessionId);
+            return { ok: true };
+        }
+      } finally { db.close(); }
+    }),
+  );
+
+  server.registerTool(
+    "brain_consult_external",
+    {
+      title: "Brain Consult External AI",
+      description:
+        "Consulta IA externa com contexto mínimo e secrets redigidos. Requer SECOND_BRAIN_EXTERNAL_AI_URL e SECOND_BRAIN_EXTERNAL_AI_KEY no ambiente.",
+      inputSchema: {
+        question: z.string().min(1),
+        contextPieces: z.array(z.object({ label: z.string(), content: z.string() })).optional(),
+      },
+    },
+    wrapJson(async (a) => {
+      const ctx = buildConsultationContext(a.contextPieces ?? []);
+      const provider = new OpenAICompatProvider();
+      return provider.consult({
+        question: redactSecrets(a.question),
+        contextPieces: ctx,
+        requestedOutput: "answer",
+      }, ctx);
+    }),
+  );
+
+  server.registerTool(
+    "brain_decisions",
+    {
+      title: "Brain Decisions",
+      description: "Lista decisões registradas (incluindo overrides humanos).",
+      inputSchema: {
+        limit: z.number().int().min(1).max(100).optional(),
+      },
+    },
+    wrapJson((a: { limit?: number }) => {
+      const db = openDb();
+      try {
+        return db
+          .prepare("SELECT * FROM decisions ORDER BY created_at DESC LIMIT ?")
+          .all(Math.max(1, Math.min(100, a.limit ?? 30)));
+      } finally { db.close(); }
+    }),
+  );
+
   return server;
 }
-
 
 function openDb() {
   return new DatabaseSync(loadConfigForTools().dbPath);
