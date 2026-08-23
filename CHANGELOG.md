@@ -1,5 +1,24 @@
 # SECOND BRAIN OS — CHANGELOG
 
+## V3.0.0 — Fases 21–25 (2026-08-23)
+### Phase 21 — Autonomy + Policy Engine
+- 4 níveis de autonomia (MANUAL/ASSISTED/SUPERVISED/AUTONOMOUS), risk matrix, kill switch, pause/resume.
+- Schema: policies table.
+
+### Phase 22 — Proactive Brain
+- generateProactiveProposals + generateDailyDigest. Detecção automática de goals atrasados e opportunity signals.
+
+### Phase 23 — Autonomous Workflows
+- Workflow Engine com steps, runs, checkpoints e progresso. Templates para vendas/marketing/engineering.
+- Schema: workflows, workflow_steps, workflow_runs.
+
+### Phase 24 — Communication Engine
+- Communication Profiles por contexto (COMMERCIAL/PERSONAL/etc). Schema: comm_profiles.
+
+### Phase 25 — Software Factory + OpenCode (preparação)
+- Contratos para OpenCode executor, workspace sandbox, command policy, multi-agent engineering.
+
+
 ## V2.2.0 — Phase 19: Agent OS (2026-08-23)
 - Agent Model estendido (role/skills/tools/projects/goals/workload/capacity/metadata).
 - Agent Manager + Selector determinístico com score e reasons (capabilities, skills, tools, projeto, workload).

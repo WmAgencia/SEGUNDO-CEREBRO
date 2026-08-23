@@ -1,4 +1,4 @@
-export const SCHEMA_VERSION = 6;
+export const SCHEMA_VERSION = 8;
 
 export interface Migration {
   from: number;
@@ -21,8 +21,90 @@ const FTS_TABLES: readonly string[] = [
   )`,
 ];
 
+const WORKFLOW_DDL: readonly string[] = [
+  `CREATE TABLE IF NOT EXISTS workflows (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    name          TEXT NOT NULL,
+    initiative_id TEXT,
+    status        TEXT NOT NULL DEFAULT 'DRAFT',
+    created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  )`,
+  `CREATE TABLE IF NOT EXISTS workflow_steps (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    workflow_id INTEGER NOT NULL REFERENCES workflows(id),
+    ordinal     INTEGER NOT NULL,
+    type        TEXT NOT NULL,
+    title       TEXT NOT NULL,
+    agent_id    TEXT,
+    status      TEXT NOT NULL DEFAULT 'PENDING',
+    result      TEXT
+  )`,
+  `CREATE TABLE IF NOT EXISTS workflow_runs (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    workflow_id  INTEGER NOT NULL REFERENCES workflows(id),
+    status       TEXT NOT NULL DEFAULT 'RUNNING',
+    checkpoint   TEXT NOT NULL DEFAULT '{}',
+    started_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    ended_at     TEXT
+  )`,
+];
+const COMM_DDL: readonly string[] = [
+  `CREATE TABLE IF NOT EXISTS comm_profiles (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner          TEXT NOT NULL,
+    context        TEXT NOT NULL,
+    tone           TEXT NOT NULL DEFAULT 'neutro',
+    formality      TEXT NOT NULL DEFAULT 'formal',
+    message_length TEXT NOT NULL DEFAULT 'curta',
+    UNIQUE(owner, context)
+  )`,
+];
+
 export const SCHEMA_STATEMENTS: readonly string[] = [
   ...FTS_TABLES,
+  `CREATE TABLE IF NOT EXISTS policies (
+    action_type      TEXT PRIMARY KEY,
+    risk_level       TEXT NOT NULL DEFAULT 'LOW',
+    autonomy_level   TEXT NOT NULL DEFAULT 'SUPERVISED',
+    requires_approval INTEGER NOT NULL DEFAULT 0,
+    max_cost         REAL NOT NULL DEFAULT 0,
+    max_retries      INTEGER NOT NULL DEFAULT 3,
+    constraints_json TEXT NOT NULL DEFAULT '[]'
+  )`,
+  `CREATE TABLE IF NOT EXISTS comm_profiles (
+    owner          TEXT NOT NULL,
+    context        TEXT NOT NULL,
+    tone           TEXT NOT NULL DEFAULT 'neutro',
+    formality      TEXT NOT NULL DEFAULT 'formal',
+    message_length TEXT NOT NULL DEFAULT 'curta',
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    UNIQUE(owner, context)
+  )`,
+  `CREATE TABLE IF NOT EXISTS workflows (
+    name          TEXT NOT NULL,
+    initiative_id TEXT,
+    status        TEXT NOT NULL DEFAULT 'DRAFT',
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  )`,
+  `CREATE TABLE IF NOT EXISTS workflow_steps (
+    workflow_id INTEGER NOT NULL REFERENCES workflows(id),
+    ordinal     INTEGER NOT NULL,
+    type        TEXT NOT NULL,
+    title       TEXT NOT NULL,
+    agent_id    TEXT,
+    status      TEXT NOT NULL DEFAULT 'PENDING',
+    result      TEXT,
+    id          INTEGER PRIMARY KEY AUTOINCREMENT
+  )`,
+  `CREATE TABLE IF NOT EXISTS workflow_runs (
+    workflow_id  INTEGER NOT NULL REFERENCES workflows(id),
+    checkpoint   TEXT NOT NULL DEFAULT '{}',
+    started_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    ended_at     TEXT,
+    status       TEXT NOT NULL DEFAULT 'RUNNING',
+    id           INTEGER PRIMARY KEY AUTOINCREMENT
+  )`,
   `CREATE TABLE IF NOT EXISTS index_metadata (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -544,4 +626,19 @@ export const MIGRATIONS: readonly Migration[] = [
     ],
   },
   { from: 5, statements: [] },
+  { from: 6, statements: [] },
+  {
+    from: 7,
+    statements: [
+      `CREATE TABLE IF NOT EXISTS policies (
+        action_type      TEXT PRIMARY KEY,
+        risk_level       TEXT NOT NULL DEFAULT 'LOW',
+        autonomy_level   TEXT NOT NULL DEFAULT 'SUPERVISED',
+        requires_approval INTEGER NOT NULL DEFAULT 0,
+        max_cost         REAL NOT NULL DEFAULT 0,
+        max_retries      INTEGER NOT NULL DEFAULT 3,
+        constraints_json TEXT NOT NULL DEFAULT '[]'
+      )`,
+    ],
+  },
 ];
