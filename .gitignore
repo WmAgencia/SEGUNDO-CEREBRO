@@ -6,3 +6,5 @@ dist/
 coverage/
 tools/
 skills-sources/
+#env
+.env.local
