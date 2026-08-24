@@ -53,7 +53,7 @@ export function startServer(config: BrainConfig, port = 3001): void {
           // Auto-send drafts for LOW-risk autonomous replies
           for (const result of results) {
             if (result.processed && result.action?.includes("draft_generated")) {
-              await autoSendDraft(config, body);
+              await autoSendDraft(config, body, result);
             }
           }
         } catch {
@@ -71,7 +71,11 @@ export function startServer(config: BrainConfig, port = 3001): void {
   });
 }
 
-async function autoSendDraft(config: BrainConfig, rawBody: string): Promise<void> {
+async function autoSendDraft(
+  config: BrainConfig,
+  rawBody: string,
+  result: { intent?: string; recipient?: string },
+): Promise<void> {
   try {
     const parsed = JSON.parse(rawBody);
     const data = parsed.data as Record<string, unknown> | undefined;
@@ -82,10 +86,7 @@ async function autoSendDraft(config: BrainConfig, rawBody: string): Promise<void
     const phone = remoteJid.split("@")[0];
     if (!phone) return;
 
-    const intentMatch = /intent=(\w+)/.exec(
-      JSON.stringify(parsed.data?._parsed ?? ""),
-    );
-    const intent = intentMatch?.[1] ?? "UNKNOWN";
+    const intent = result.intent ?? "UNKNOWN";
 
     const AUTONOMOUS_INTENTS = ["GREETING", "QUESTION", "SERVICE", "INTEREST", "FOLLOW_UP"];
     if (!AUTONOMOUS_INTENTS.includes(intent)) {
@@ -102,7 +103,7 @@ async function autoSendDraft(config: BrainConfig, rawBody: string): Promise<void
 
     const draft = extractDraftFromDb(config, externalIdOf(key));
     if (!draft) return;
-    await evolution.sendMessage(phone, draft);
+    await evolution.sendMessage(result.recipient ?? phone, draft);
   } catch {}
 }
 

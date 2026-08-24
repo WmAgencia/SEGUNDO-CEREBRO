@@ -14,23 +14,30 @@ export interface WebhookEvent {
 export function handleEvolutionWebhook(
   config: BrainConfig,
   body: WebhookEvent,
-): { processed: boolean; action?: string; error?: string } {
+): { processed: boolean; action?: string; error?: string; intent?: string; recipient?: string } {
   if (!body.event || !body.instance) {
     return { processed: false, error: "missing event or instance" };
   }
+
+  const expectedInstance = process.env.EVOLUTION_INSTANCE;
+  if (expectedInstance && body.instance.toLowerCase() !== expectedInstance.toLowerCase()) {
+    return { processed: false, error: "instance rejected" };
+  }
+
+  const event = body.event.toUpperCase().replace(/[.\-\s]+/g, "_");
 
   const db = new DatabaseSync(config.dbPath);
   try {
     ensureCommTables(db);
 
-    switch (body.event) {
+    switch (event) {
       case "MESSAGES_UPSERT":
         return processIncomingMessage(db, config, body.data);
       case "CONNECTION_UPDATE":
         logEvent(db, "connection_update", body.instance, {});
         return { processed: true, action: "connection_update_logged" };
       default:
-        return { processed: false, action: `ignored:${body.event}` };
+        return { processed: false, action: `ignored:${event}` };
     }
   } catch (err) {
     return {
@@ -46,7 +53,7 @@ function processIncomingMessage(
   db: DatabaseSync,
   config: BrainConfig,
   data?: Record<string, unknown>,
-): { processed: boolean; action?: string; error?: string } {
+): { processed: boolean; action?: string; error?: string; intent?: string; recipient?: string } {
   const key = (data?.key as Record<string, unknown>) ?? {};
   const externalId = String(key.id ?? "");
   const fromMe = Boolean(key.fromMe);
@@ -85,6 +92,8 @@ function processIncomingMessage(
   return {
     processed: true,
     action: `message_saved|intent=${intent}|draft_generated`,
+    intent,
+    recipient: phone,
   };
 }
 
