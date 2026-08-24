@@ -44,7 +44,7 @@ describe("nutrition engine", () => {
 
   it("handles negative quantity gracefully", () => {
     const r = calculateFoodNutrition(frango, -50);
-    expect(r.kcal).toBeLessThanOrEqual(0);
+    expect(r.kcal).toBe(0);
   });
 
   it("day totals sum correctly", () => {

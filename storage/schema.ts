@@ -1,4 +1,4 @@
-export const SCHEMA_VERSION = 8;
+export const SCHEMA_VERSION = 9;
 
 export interface Migration {
   from: number;
@@ -233,8 +233,12 @@ export const SCHEMA_STATEMENTS: readonly string[] = [
     description TEXT NOT NULL DEFAULT '',
     category    TEXT NOT NULL DEFAULT 'general',
     permissions TEXT NOT NULL DEFAULT '[\"READ\"]',
-    risk        TEXT,
-    origin      TEXT NOT NULL DEFAULT 'local',
+     risk        TEXT,
+     input_schema TEXT NOT NULL DEFAULT '{}',
+     output_schema TEXT NOT NULL DEFAULT '{}',
+     side_effects TEXT NOT NULL DEFAULT '[]',
+     risk_level TEXT NOT NULL DEFAULT 'LOW',
+     origin      TEXT NOT NULL DEFAULT 'local',
     available   INTEGER NOT NULL DEFAULT 1,
     metadata    TEXT NOT NULL DEFAULT '{}'
   )`,
@@ -585,8 +589,37 @@ export const SCHEMA_STATEMENTS: readonly string[] = [
     answer     TEXT,
     risks      TEXT NOT NULL DEFAULT '[]',
     confidence REAL,
-    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-  )`,
+     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+   )`,
+  `CREATE TABLE IF NOT EXISTS agent_runs (
+     id TEXT PRIMARY KEY, session_id TEXT NOT NULL, task_id INTEGER,
+     initiative_id TEXT, agent_id TEXT NOT NULL, project_id TEXT,
+     state TEXT NOT NULL DEFAULT 'IDLE', previous_state TEXT,
+     current_step INTEGER NOT NULL DEFAULT 0, retry_count INTEGER NOT NULL DEFAULT 0,
+     completed_steps TEXT NOT NULL DEFAULT '[]', pending_steps TEXT NOT NULL DEFAULT '[]',
+     files_changed TEXT NOT NULL DEFAULT '[]', decisions TEXT NOT NULL DEFAULT '[]',
+     context_reference TEXT, agent_state TEXT NOT NULL DEFAULT '{}',
+     tool_results TEXT NOT NULL DEFAULT '[]', last_successful_action TEXT,
+     budgets TEXT NOT NULL DEFAULT '{}', usage TEXT NOT NULL DEFAULT '{}',
+     correlation_id TEXT NOT NULL, causation_id TEXT,
+     kill_switch INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+     updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+   )`,
+  `CREATE TABLE IF NOT EXISTS agent_checkpoints (
+     id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL REFERENCES agent_runs(id),
+     state TEXT NOT NULL, current_step INTEGER NOT NULL, snapshot TEXT NOT NULL,
+     correlation_id TEXT NOT NULL, causation_id TEXT, created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+   )`,
+  `CREATE TABLE IF NOT EXISTS agent_traces (
+     id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL REFERENCES agent_runs(id),
+     event TEXT NOT NULL, state TEXT, payload TEXT NOT NULL DEFAULT '{}',
+     correlation_id TEXT NOT NULL, causation_id TEXT, created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+   )`,
+  `CREATE TABLE IF NOT EXISTS agent_evals (
+     id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL REFERENCES agent_runs(id),
+     criterion TEXT NOT NULL, status TEXT NOT NULL, feedback TEXT NOT NULL DEFAULT '',
+     evidence TEXT NOT NULL DEFAULT '[]', created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+   )`,
 ];
 
 export interface Migration {
@@ -639,6 +672,15 @@ export const MIGRATIONS: readonly Migration[] = [
         max_retries      INTEGER NOT NULL DEFAULT 3,
         constraints_json TEXT NOT NULL DEFAULT '[]'
       )`,
+    ],
+  },
+  {
+    from: 8,
+    statements: [
+      "ALTER TABLE tools_registry ADD COLUMN input_schema TEXT NOT NULL DEFAULT '{}'",
+      "ALTER TABLE tools_registry ADD COLUMN output_schema TEXT NOT NULL DEFAULT '{}'",
+      "ALTER TABLE tools_registry ADD COLUMN side_effects TEXT NOT NULL DEFAULT '[]'",
+      "ALTER TABLE tools_registry ADD COLUMN risk_level TEXT NOT NULL DEFAULT 'LOW'",
     ],
   },
 ];

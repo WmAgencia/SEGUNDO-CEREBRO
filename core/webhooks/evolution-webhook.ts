@@ -2,6 +2,8 @@ import { DatabaseSync } from "node:sqlite";
 import type { BrainConfig } from "../config/loader.ts";
 import { ensureCommTables, resolveContact, resolveConversation, saveMessage, isDuplicateMessage, classifyIntent, getCustomerProfile, nextBestAction, nextBestQuestion, stageForIntent, updateCustomerProfile, updateProfileFromMessage } from "../comms/pipeline.ts";
 import { redactSecrets } from "../exec/redact.ts";
+import { ANA_PHONE, compilePersonalContext, personalReply, qualityGate } from "../personal/personal-agent.ts";
+import { setKillSwitch } from "../autonomous/cycle.ts";
 
 const OWNER_PHONE = () => (process.env.OWNER_WHATSAPP ?? "5515981817336").replace(/\D/g, "");
 const OPS_GROUP_ID = () => process.env.SECOND_BRAIN_OPERATIONS_GROUP ?? "120363427273069174@g.us";
@@ -116,6 +118,10 @@ function processIncomingMessage(
     return { processed: false, action: "skipped:owner_private_chat_no_admin" };
   }
 
+  if (phone.replace(/\D/g, "") === ANA_PHONE) {
+    return processPersonalMessage(db, phone, pushName, externalId, content);
+  }
+
   const contact = resolveContact(db, phone.replace(/\D/g, ""), pushName);
   const conversation = resolveConversation(db, contact.id);
   saveMessage(db, conversation.id, externalId, "inbound", msgContent);
@@ -196,6 +202,28 @@ function processIncomingMessage(
   };
 }
 
+function processPersonalMessage(
+  db: DatabaseSync,
+  phone: string,
+  name: string,
+  externalId: string,
+  content: string,
+): { processed: boolean; action: string; recipient: string; intent: string } {
+  const contact = resolveContact(db, phone.replace(/\D/g, ""), name);
+  const conversation = resolveConversation(db, contact.id);
+  saveMessage(db, conversation.id, externalId, "inbound", content);
+  const context = compilePersonalContext(db, ANA_PHONE);
+  const draft = context ? personalReply(context, content) : { text: "Obrigado por escrever. Podemos conversar mais depois?", confidence: 0 };
+  const gate = qualityGate(context, draft.text);
+  if (!gate.allowed) {
+    logEvent(db, "personal_quality_gate_blocked", ANA_PHONE, { reasons: gate.reasons, confidence: draft.confidence });
+    return { processed: true, action: "personal_response_blocked", recipient: phone, intent: "PERSONAL" };
+  }
+  saveMessage(db, conversation.id, `draft_${externalId}`, "outbound", draft.text);
+  logEvent(db, "personal_draft_created", ANA_PHONE, { confidence: draft.confidence, context: "PERSONAL" });
+  return { processed: true, action: "personal_draft_generated", recipient: phone, intent: "PERSONAL" };
+}
+
 function handleOwnerCommand(
   db: DatabaseSync,
   config: BrainConfig,
@@ -246,28 +274,38 @@ function handleOwnerCommand(
     };
   }
 
-  if (/^pare tudo$/i.test(ctx.content)) {
+  const command = ctx.content.replace(/^@brain\s*/i, "").trim();
+  if (/^pare tudo$/i.test(command)) {
     activateKillSwitch(db, ownerPhone);
     return { processed: true, action: "kill_switch_activated" };
   }
-  if (/^(pausar agente|pause o agente)\s+(.+)$/i.test(ctx.content)) {
-    const m = /^(pausar agente|pause o agente)\s+(.+)$/i.exec(ctx.content);
+  if (/^(continue|retomar|resume|retomar agente|resume o agente)$/i.test(command)) {
+    setKillSwitch(false);
+    logEvent(db, "kill_switch_deactivated", ownerPhone, { channel: "SECOM" });
+    return { processed: true, action: "kill_switch_deactivated" };
+  }
+  if (/^(pausar agente|pause o agente|pause engineering)\s+(.+)$/i.test(command)) {
+    const m = /^(pausar agente|pause o agente|pause engineering)\s+(.+)$/i.exec(command);
     if (m?.[2]) pauseAgent(db, m[2].trim());
     return { processed: true, action: "agent_paused" };
   }
-  if (/^(retomar agente|resume o agente)\s+(.+)$/i.test(ctx.content)) {
-    const m = /^(retomar agente|resume o agente)\s+(.+)$/i.exec(ctx.content);
+  if (/^(retomar agente|resume o agente|resume engineering)\s+(.+)$/i.test(command)) {
+    const m = /^(retomar agente|resume o agente|resume engineering)\s+(.+)$/i.exec(command);
     if (m?.[2]) resumeAgent(db, m[2].trim());
     return { processed: true, action: "agent_resumed" };
   }
-  if (/qual o status|me d. o relat/i.test(ctx.content)) {
+  if (/status|relat[óo]rio/i.test(command)) {
     return { processed: true, action: "status_report_requested" };
   }
 
+  if (/^(implemente|pesquise|consulte segunda opini[ãa]o)/i.test(command)) {
+    return { processed: true, action: "owner_command_queued_in_secom" };
+  }
   return { processed: true, action: "owner_command_acknowledged_not_implemented" };
 }
 
 function activateKillSwitch(db: DatabaseSync, by: string): void {
+  setKillSwitch(true);
   db.prepare("INSERT INTO events (event_type, subject, payload) VALUES ('kill_switch_activated', ?, ?)").run(by, "{}");
 }
 function pauseAgent(db: DatabaseSync, agentId: string): void {

@@ -127,3 +127,33 @@ second-brain/
   `*.pem`, `*.key`, `**/secrets/**`, `**/credentials/**`, `.obsidian/`).
 - Escrita no vault: bloqueada na V1 (futura e só c/ confirmação explícita).
 - `data/brain.db` é derivável → pode ser excluído de backups sensíveis.
+
+## 7. Fase 37 — Professional Agent Harness
+
+`core/agents/professional-harness.ts` é a camada de orquestração sobre o
+Agent OS existente. Runs persistem em `agent_runs`, checkpoints em
+`agent_checkpoints`, traces estruturados em `agent_traces` e critérios
+independentes em `agent_evals` (schema v9). O fluxo determinístico é
+OBSERVE → CONTEXT → PLAN → WORKER → OPENCODE → TEST → EVALUATOR →
+REWORK/ DOCUMENT → LEARN → SECOM → NEXT TASK.
+
+O contexto é compilado por prioridade e limite de caracteres, ferramentas
+recebem contratos e guardrails, e o sandbox do Nutriva restringe caminhos e
+comandos. O vault continua somente leitura automática. Comandos administrativos
+são aceitos exclusivamente quando `sender_id` e `group_id` autorizam o SECOM;
+o número pessoal do owner nunca é destino administrativo.
+
+## 8. Fase 38 — Worker e comunicação pessoal
+
+`core/agents/world-state.ts` produz uma visão resumida dos subsistemas;
+`core/agents/continuous-worker.ts` executa tarefas sequenciais, criando um
+run persistido por tarefa e parando em budget, falha ou blocker.
+`core/personal/personal-agent.ts` é separado do fluxo comercial: só aceita
+`15981142057`, recupera contexto `PERSONAL`, aplica confiança/privacy e só
+pode enviar quando `PERSONAL_AGENT_ENABLED=true`. `CUSTOMER_AUTO_SEND`
+permanece desligado.
+
+O benchmark OpenCode real fica bloqueado quando
+`node_modules/.bin/opencode` não existe; não há fallback fake. A conversa com
+Ana só é ativada após mensagem inbound real e contexto suficiente. A API
+Evolution foi verificada como `SECOM=open`, mas nenhuma mensagem foi enviada.

@@ -58,8 +58,9 @@ export function startServer(config: BrainConfig, port = 3001): void {
           for (const result of results) {
             if (result.approval) {
               await processApprovalResult(config, result.approval);
-            } else if (result.processed && result.action?.includes("draft_generated")) {
-              await autoSendDraft(config, body, result);
+              } else if (result.processed && result.action?.includes("draft_generated")) {
+                // Commercial auto-send remains explicitly disabled in this phase.
+                await autoSendDraft(config, body, result);
             }
             if (result.processed) await notifyOperations(result.action ?? "webhook_processed");
           }
@@ -143,6 +144,16 @@ async function autoSendDraft(
   rawBody: string,
   result: { intent?: string; recipient?: string },
 ): Promise<void> {
+  if (result.intent === "PERSONAL") {
+    if (process.env.PERSONAL_AGENT_ENABLED !== "true" || result.recipient?.replace(/\D/g, "") !== "15981142057") return;
+    const draft = extractDraftFromDb(config, externalIdOf((JSON.parse(rawBody).data as Record<string, unknown>).key as Record<string, unknown>));
+    if (!draft) return;
+    const sent = await evolution.sendMessage("15981142057", draft);
+    recordOutbound(config, "15981142057", externalIdOf((JSON.parse(rawBody).data as Record<string, unknown>).key as Record<string, unknown>), sent.messageId, draft);
+    return;
+  }
+  // Commercial automation is disabled by policy, not by a user-controlled flag.
+  return;
   try {
     const parsed = JSON.parse(rawBody);
     const data = parsed.data as Record<string, unknown> | undefined;
@@ -159,12 +170,7 @@ async function autoSendDraft(
     if (!AUTONOMOUS_INTENTS.includes(intent)) {
       // HIGH risk → notify owner instead of sending
       const draft = extractDraftFromDb(config, externalIdOf(key));
-      if (draft) {
-        await evolution.sendMessage(
-          process.env.OWNER_WHATSAPP ?? "5515981817336",
-          `Cliente: ${phone}\nMensagem: ${msgContent(data)}\n\nResposta sugerida:\n${draft}\n\nAção: APROVAR / REJEITAR`,
-        );
-      }
+      void draft;
       return;
     }
 

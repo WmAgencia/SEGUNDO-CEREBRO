@@ -5,6 +5,8 @@ data/
 dist/
 coverage/
 tools/
+!core/tools/
+!core/tools/tool-registry.ts
 skills-sources/
 #env
 .env.local

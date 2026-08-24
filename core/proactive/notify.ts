@@ -8,14 +8,14 @@ import { unifiedQuery } from "../unified.ts";
 import { redactSecrets } from "../exec/redact.ts";
 import * as evolution from "../comms/evolution-api.ts";
 
-const WHATSAPP_NUMBER = () => process.env.OWNER_WHATSAPP ?? "5515981817336";
+const OPERATIONS_GROUP = () => process.env.SECOND_BRAIN_OPERATIONS_GROUP ?? "120363427273069174@g.us";
 
 export async function notify(
   config: BrainConfig,
   message: string,
 ): Promise<boolean> {
   try {
-    const result = await evolution.sendMessage(WHATSAPP_NUMBER(), message);
+    const result = await evolution.sendMessage(OPERATIONS_GROUP(), message);
     return result.messageId !== "unknown";
   } catch {
     return false;

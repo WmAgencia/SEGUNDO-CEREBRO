@@ -111,7 +111,7 @@ describe("fase 28.2 — owner command channel", () => {
   });
 
   it("OWNER + SECOM + 'pare tudo' → kill switch", () => {
-    const result = sendAs(OPS_GROUP, OWNER_PHONE, "pare tudo", "cmd-kill-001");
+    const result = sendAs(OPS_GROUP, OWNER_PHONE, "@brain pare tudo", "cmd-kill-001");
     expect(result.processed).toBe(true);
     expect(result.action).toBe("kill_switch_activated");
   });

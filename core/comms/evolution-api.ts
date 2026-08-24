@@ -3,6 +3,7 @@ import { redactSecrets } from "../exec/redact.ts";
 const BASE_URL = () => process.env.EVOLUTION_API_URL ?? "";
 const API_KEY = () => process.env.EVOLUTION_API_KEY ?? "";
 const INSTANCE = () => process.env.EVOLUTION_INSTANCE ?? "SECOM";
+const OWNER_PHONE = "15981817336";
 
 export interface EvolutionMessage {
   key: { remoteJid: string; fromMe: boolean; id: string };
@@ -42,11 +43,15 @@ async function evoRequest<T>(
 }
 
 export async function sendMessage(toNumber: string, text: string): Promise<{ messageId: string; status: string }> {
+  const normalized = toNumber.replace(/\D/g, "");
+  if (normalized === OWNER_PHONE || normalized === `55${OWNER_PHONE}`) {
+    throw new Error("OWNER_PRIVATE_CHANNEL_DISABLED");
+  }
   const result = await evoRequest<{
     key: { id: string };
     status?: string;
   }>("POST", `/message/sendText/${INSTANCE()}`, {
-    number: toNumber.startsWith("55") ? toNumber : `55${toNumber}`,
+    number: normalized.startsWith("55") ? normalized : `55${normalized}`,
     text: redactSecrets(text),
   });
   return {

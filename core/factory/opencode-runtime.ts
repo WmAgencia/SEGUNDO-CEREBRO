@@ -64,7 +64,8 @@ export class OpenCodeRuntime {
         task,
       ];
 
-      const proc = spawn("node", ["node_modules/.bin/opencode", "run", "--model", model, "--agent", agent, task], {
+       const command = resolveOpenCodeCommand();
+       const proc = spawn(command, ["run", "--model", model, "--agent", agent, task], {
         cwd: workspacePath,
         env: { ...process.env },
         timeout: options.timeoutMs ?? 300000,
@@ -119,4 +120,10 @@ export class OpenCodeRuntime {
     const matches = [...output.matchAll(/(?:Modified|Created|Edited):\s*(.+)/gi)];
     return matches.map((m) => (m[1] ?? "").trim()).filter(Boolean).slice(0, 20);
   }
+}
+
+export function resolveOpenCodeCommand(): string {
+  const local = process.platform === "win32" ? "node_modules/.bin/opencode.cmd" : "node_modules/.bin/opencode";
+  if (existsSync(local)) return local;
+  return process.platform === "win32" ? "opencode.cmd" : "opencode";
 }
