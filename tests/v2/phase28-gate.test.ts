@@ -188,22 +188,41 @@ describe("FASE 28 GATE — Sales Intelligence E2E", () => {
   });
 });
 
-describe("FASE 28 GATE — Approval Flow", () => {
-  it("8. Owner aprova via mensagem 'aprovar' → resposta enviada ao cliente", () => {
-    const result = simulateInbound("owner-apr-001", "aprovar", "5515981817336");
+describe("FASE 28 GATE — Approval Flow (SECOM channel)", () => {
+  it("8. Owner aprova via SECOM → resposta enviada ao cliente", () => {
+    const result = sendAs(OPS_GROUP, OWNER_PHONE, "aprovar", "gate-apr-secom-001");
     expect(result.processed).toBe(true);
     if (result.approval) {
       expect(result.approval.decision).toBe("APPROVED");
     }
   });
 
-  it("9. Owner rejeita via mensagem 'rejeitar'", () => {
-    // Primeiro cria nova situação que requer aprovação
+  it("9. Owner rejeita via SECOM", () => {
     simulateInbound("gate-msg-rej", "Tem como fazer por R$300?", "5511977776666");
-    const result = simulateInbound("owner-rej-001", "rejeitar", "5515981817336");
+    const result = sendAs(OPS_GROUP, OWNER_PHONE, "rejeitar", "gate-rej-secom-001");
     expect(result.processed).toBe(true);
   });
 });
+
+const OPS_GROUP = "120363427273069174@g.us";
+const OWNER_PHONE = "5515981817336";
+
+function sendAs(chatId: string, senderPhone: string, text: string, msgId: string) {
+  return handleEvolutionWebhook(config, {
+    event: "messages.upsert",
+    instance: "SECOM",
+    data: {
+      key: {
+        remoteJid: chatId,
+        fromMe: false,
+        id: msgId,
+        participant: `${senderPhone}@s.whatsapp.net`,
+      },
+      pushName: "Owner",
+      message: { conversation: text },
+    },
+  });
+}
 
 function db(): DatabaseSync {
   return new DatabaseSync(config.dbPath);

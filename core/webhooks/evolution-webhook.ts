@@ -91,19 +91,31 @@ function processIncomingMessage(
   const remoteJid = String(key.remoteJid ?? "");
   const content = msgContent.trim();
   const isGroup = remoteJid.includes("@g.us");
-  const isOpsGroup = isGroup && remoteJid === OPS_GROUP_ID();
-  const participantPhone = String(String(key.participant ?? "").split("@")[0]).replace(/\D/g, "");
 
-  if (isOpsGroup) {
-    return handleOwnerCommand(db, config, {
-      remoteJid,
-      participantPhone,
-      content,
-    });
+  // STRUCTURAL FIX: Only individual chats enter the Sales Flow.
+  // Groups are either OPS (owner commands) or OTHER (ignored).
+  if (isGroup) {
+    const isOpsGroup = remoteJid === OPS_GROUP_ID();
+    if (isOpsGroup) {
+      const participantPhone = String(String(key.participant ?? "").split("@")[0]).replace(/\D/g, "");
+      return handleOwnerCommand(db, config, {
+        remoteJid,
+        participantPhone,
+        content,
+      });
+    }
+    return { processed: false, action: "skipped:other_group_not_sales_flow" };
   }
 
+  // STRUCTURAL FIX: Skip outbound/system messages — they never start Sales Flow.
   const phone = remoteJid.split("@")[0] ?? remoteJid;
   const pushName = String(data?.pushName ?? phone);
+
+  const ownerPhone = OWNER_PHONE();
+  if (phone.replace(/\D/g, "") === ownerPhone) {
+    return { processed: false, action: "skipped:owner_private_chat_no_admin" };
+  }
+
   const contact = resolveContact(db, phone.replace(/\D/g, ""), pushName);
   const conversation = resolveConversation(db, contact.id);
   saveMessage(db, conversation.id, externalId, "inbound", msgContent);
@@ -113,6 +125,23 @@ function processIncomingMessage(
   const next = nextBestAction(intent, profile);
   const profilePatch = updateProfileFromMessage(profile, content);
   const question = nextBestQuestion({ ...profile, ...profilePatch });
+
+  // Dedup: se já existe approval PENDING para este customer, não criar outra
+  const pendingApproval = db
+    .prepare(
+      "SELECT id FROM approvals WHERE status='PENDING' AND payload LIKE ?",
+    )
+    .get(`%"customerPhone":"${phone.replace(/\D/g, "")}"%`) as { id: number } | undefined;
+  if (pendingApproval && next.action === "REQUEST_HUMAN") {
+    logEvent(db, "approval_duplicate_blocked", phone, { approvalId: pendingApproval.id });
+    return {
+      processed: true,
+      action: `approval_already_pending|approval_id=${pendingApproval.id}`,
+      intent,
+      recipient: phone,
+    };
+  }
+
   updateCustomerProfile(db, contact.id, {
     ...profilePatch,
     sales_stage: stageForIntent(intent),

@@ -61,7 +61,7 @@ describe("fase 26 — operational reality test", () => {
       event: "MESSAGES_UPSERT",
       instance: "SECOM",
       data: {
-        key: { remoteJid: "5515981817336@s.whatsapp.net", fromMe: false, id: "test_msg_001" },
+        key: { remoteJid: "55119999990001@s.whatsapp.net", fromMe: false, id: "test_msg_001" },
         pushName: "Cliente Teste",
         message: { conversation: "Oi, queria saber quanto custa um site." },
       },
@@ -76,7 +76,7 @@ describe("fase 26 — operational reality test", () => {
       event: "MESSAGES_UPSERT",
       instance: "SECOM",
       data: {
-        key: { remoteJid: "5515981817336@s.whatsapp.net", fromMe: false, id: "test_msg_001" },
+        key: { remoteJid: "55119999990001@s.whatsapp.net", fromMe: false, id: "test_msg_001" },
         message: { conversation: "Oi" },
       },
     });
@@ -89,7 +89,7 @@ describe("fase 26 — operational reality test", () => {
       event: "MESSAGES_UPSERT",
       instance: "SECOM",
       data: {
-        key: { remoteJid: "5515981817336@s.whatsapp.net", fromMe: true, id: "own_001" },
+        key: { remoteJid: "55119999990001@s.whatsapp.net", fromMe: true, id: "own_001" },
         message: { conversation: "minha própria mensagem" },
       },
     });
