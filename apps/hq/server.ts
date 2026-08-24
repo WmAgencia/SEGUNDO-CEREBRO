@@ -4,7 +4,7 @@ import { readFileSync, existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadConfig } from "../../core/config/loader.ts";
-import { getHqSnapshot, executeHqCommand, dispatchInitiative } from "../../core/hq/hq-api.ts";
+import { getHqSnapshot, executeHqCommand, dispatchInitiative, requestHandoff, agentProfile, progressSummary } from "../../core/hq/hq-api.ts";
 import { recentHqEvents } from "../../core/hq/event-stream.ts";
 import { transcribeAudio } from "../../core/audio/transcription.ts";
 import { executeEngineeringTask } from "../../core/hq/engineering.ts";
@@ -33,6 +33,17 @@ const server = createServer((req, res) => {
   }
   if (req.method === "POST" && url.pathname === "/api/hq/dispatch") {
     let body = ""; req.on("data", (chunk) => { body += chunk.toString(); }); req.on("end", () => { try { const input = JSON.parse(body) as { initiativeId?: string; agentId?: string }; if (!input.initiativeId) throw new Error("initiativeId is required"); const result = dispatchInitiative(config, input.initiativeId, input.agentId ?? "manager"); res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify(result)); } catch (error) { res.writeHead(400, { "Content-Type": "application/json" }); res.end(JSON.stringify({ assigned: false, error: error instanceof Error ? error.message : String(error) })); } }); return;
+  }
+  if (req.method === "GET" && url.pathname.startsWith("/api/hq/agent/")) {
+    const agentId = decodeURIComponent(url.pathname.split("/").pop() ?? "");
+    const profile = agentProfile(config, agentId);
+    res.writeHead(profile ? 200 : 404, { "Content-Type": "application/json" }); res.end(JSON.stringify(profile ?? { error: "not found" })); return;
+  }
+  if (req.method === "GET" && url.pathname === "/api/hq/progress") {
+    res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify(progressSummary(config))); return;
+  }
+  if (req.method === "POST" && url.pathname === "/api/hq/handoff") {
+    let body = ""; req.on("data", (chunk) => { body += chunk.toString(); }); req.on("end", () => { try { const input = JSON.parse(body) as { fromAgent?: string; toAgent?: string; summary?: string; taskId?: number; initiativeId?: string }; if (!input.fromAgent || !input.toAgent || !input.summary) throw new Error("fromAgent, toAgent and summary are required"); const result = requestHandoff(config, input as Parameters<typeof requestHandoff>[1]); res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify(result)); } catch (error) { res.writeHead(400, { "Content-Type": "application/json" }); res.end(JSON.stringify({ accepted: false, error: error instanceof Error ? error.message : String(error) })); } }); return;
   }
   const requested = url.pathname === "/" ? "/index.html" : url.pathname;
   const file = path.resolve(publicDir, `.${requested}`); if (!file.startsWith(path.resolve(publicDir)) || !existsSync(file)) { res.writeHead(404); res.end("Not found"); return; }
