@@ -1,67 +1,66 @@
 <!doctype html>
 <html lang="pt-BR">
 <head>
-  <meta charset="UTF-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Second Brain HQ</title>
-  <link rel="stylesheet" href="/style.css"/>
+  <meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+  <title>Second Brain HQ</title><link rel="stylesheet" href="/style.css"/>
 </head>
 <body>
-  <header class="topbar">
-    <div class="tb-brand"><span class="logo">SB</span><span class="brand-name">SECOND BRAIN <b>HQ</b></span></div>
-    <div class="tb-status"><i id="pulse"></i><span id="conn-status">Conectando…</span></div>
-    <div class="tb-metrics" id="metrics">
-      <button class="metric" data-panel="goals"><b>—</b><small>Objetivos</small></button>
-      <button class="metric" data-panel="tasks"><b>—</b><small>Tarefas</small></button>
-      <button class="metric" data-panel="agents"><b>—</b><small>Agentes</small></button>
-      <button class="metric" data-panel="approvals"><b>—</b><small>Aprovações</small></button>
-    </div>
-    <nav class="tb-actions">
-      <button class="btn ghost" id="btn-command">💬 Comando</button>
-      <button class="btn danger" id="btn-pause">⏸ Pausar</button>
-      <button class="btn success" id="btn-resume">▶ Continuar</button>
-    </nav>
-  </header>
-
-  <main class="office-wrap">
-    <div class="floor-scroll"><div class="floor" id="floor"></div></div>
-  </main>
-
-  <section class="bottom-grid">
-    <div class="panel">
-      <h3>📋 Tarefas</h3><span class="count" id="task-count"></span>
-      <div class="board" id="board"></div>
-    </div>
-    <div class="panel">
-      <h3>📡 Eventos</h3><span class="live-dot">AO VIVO</span>
-      <div class="event-list" id="events"></div>
-    </div>
-  </section>
-
-  <!-- Command Center Modal -->
-  <div class="overlay" id="cmd-overlay">
-    <div class="modal cmd-modal">
-      <div class="modal-head"><h2>💬 Central de Comando</h2><button class="close-btn" data-close>✕</button></div>
-      <p class="cmd-hint">Envie ordens naturais ao Orquestrador.</p>
-      <textarea id="command-input" rows="4" placeholder='Ex.: "Precisamos faturar R$5.000 até o fim do mês." ou "pare tudo"'></textarea>
-      <div class="cmd-actions">
-        <button class="btn voice" id="btn-voice">🎙️ Falar</button>
-        <button class="btn primary" id="btn-send">Enviar ➤</button>
-      </div>
-      <p class="cmd-result" id="command-result"></p>
-    </div>
+<header class="topbar">
+  <div class="tb-brand"><span class="logo">SB</span><span class="brand-name"><b>HQ</b></span></div>
+  <div class="tb-status"><i id="pulse"></i><span id="conn-status">Conectando…</span></div>
+  <div class="tb-metrics" id="metrics">
+    <button class="metric"><b>—</b><small>Objetivos</small></button>
+    <button class="metric"><b>—</b><small>Tarefas</small></button>
+    <button class="metric"><b>—</b><small>Agentes</small></button>
+    <button class="metric"><b>—</b><small>Aprovações</small></button>
   </div>
+  <nav class="tb-actions">
+    <button class="btn ghost" id="btn-command">💬 Comando</button>
+    <button class="btn danger" id="btn-pause">⏸ Parar</button>
+    <button class="btn success" id="btn-resume">▶ Continuar</button>
+  </nav>
+</header>
 
-  <!-- Agent Profile Panel -->
-  <aside class="profile-panel" id="profile-panel">
-    <button class="close-btn" id="profile-close">✕</button>
-    <div id="profile-content"><p class="muted">Clique num agente no escritório.</p></div>
-  </aside>
+<div class="viewport" id="viewport">
+  <div class="camera" id="camera">
+    <div class="floor" id="floor"></div>
+  </div>
+</div>
 
-  <!-- Toast -->
-  <div class="toast" id="toast"></div>
+<div class="zoom-controls">
+  <button id="zoom-in">＋</button>
+  <button id="zoom-out">−</button>
+  <button id="zoom-fit">⛶</button>
+</div>
 
-  <script src="/config.js"></script>
-  <script src="/app.js"></script>
-</body>
-</html>
+<div class="bottom-panels" id="bottom-panels">
+  <div class="panel-toggle" id="panel-toggle"><span>📋 Tarefas & 📡 Eventos</span><span class="arrow">▼</span></div>
+  <div class="panel-body">
+    <div class="bp-section"><div class="bp-title">Tarefas</div><div class="board" id="board"></div></div>
+    <div class="bp-section"><div class="bp-title">Eventos ao vivo</div><div class="event-list" id="events"></div></div>
+  </div>
+</div>
+
+<!-- Command Center Sidebar -->
+<aside class="sidebar" id="cmd-sidebar">
+  <div class="sidebar-head"><h3>💬 Gerente</h3><button class="close-btn" id="cmd-close">✕</button></div>
+  <div class="sidebar-body" id="chat-body"><div class="msg mgr"><small>Gerente</small>Olá! Como posso ajudar o escritório hoje?</div></div>
+  <div class="sidebar-input-area">
+    <textarea id="command-input" rows="2" placeholder='Digite uma ordem… (Enter envia)'></textarea>
+    <div class="sidebar-actions">
+      <button class="btn voice" id="btn-voice">🎙️ Falar</button>
+      <button class="btn primary" id="btn-send">Enviar ➤</button>
+    </div>
+    <p class="cmd-result" id="command-result"></p>
+  </div>
+</aside>
+
+<!-- Agent Profile -->
+<aside class="profile-panel" id="profile-panel">
+  <button class="close-btn" id="profile-close">✕</button>
+  <div id="profile-content"><p class="muted">Clique num agente.</p></div>
+</aside>
+
+<div class="toast" id="toast"></div>
+<script src="/config.js"></script><script src="/app.js"></script>
+</body></html>
