@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, exec } from "node:child_process";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { redactSecrets } from "../exec/redact.ts";
@@ -53,22 +53,34 @@ export class OpenCodeRuntime {
     const agent = options.agent ?? "build";
 
     return new Promise<OpenCodeSession>((resolve) => {
-      const args = [
-        "--experimental-strip-types",
-        "-e",
-        `process.env.SECOND_BRAIN_VAULT="${config.vaultPath}"`,
-        "node_modules/.bin/opencode",
-        "run",
-        "--model", model,
-        "--agent", agent,
-        task,
-      ];
-
        const command = resolveOpenCodeCommand();
        const commandArgs = ["run", "--model", model, "--agent", agent, task];
-       const executable = process.platform === "win32" ? (process.env.ComSpec ?? "cmd.exe") : command;
-       const executableArgs = process.platform === "win32" ? ["/d", "/s", "/c", [command, ...commandArgs.map(quoteShellArg)].join(" ")] : commandArgs;
-       const proc = spawn(executable, executableArgs, {
+
+      const finish = (code: number | null, stdout: string, stderr: string) => {
+        this.activeProcesses.delete(sessionId);
+        resolve({
+          sessionId,
+          workspacePath,
+          status: code === 0 ? "COMPLETED" : "FAILED",
+          startedAt: new Date().toISOString(),
+          endedAt: new Date().toISOString(),
+           output: redactSecrets(`${stdout}\n${stderr}`.slice(0, 5000)),
+          filesChanged: this.extractFilesChanged(stdout),
+          testsPassed: /passed|OK|success/i.test(stdout),
+          error: code !== 0 ? redactSecrets(stderr.slice(0, 1000)) : null,
+        });
+      };
+
+      if (process.platform === "win32") {
+        const commandLine = `${command} ${commandArgs.map(quoteShellArg).join(" ")} < NUL`;
+        const child = exec(commandLine, { cwd: workspacePath, env: process.env, timeout: options.timeoutMs ?? 300000, windowsHide: true }, (error, stdout, stderr) => {
+          finish(error ? (typeof error.code === "number" ? error.code : 1) : 0, stdout ?? "", stderr ?? (error ? error.message : ""));
+        });
+        this.activeProcesses.set(sessionId, child);
+        return;
+      }
+
+       const proc = spawn(command, commandArgs, {
          cwd: workspacePath,
          env: { ...process.env },
          shell: false,
@@ -82,20 +94,7 @@ export class OpenCodeRuntime {
       proc.stdout?.on("data", (data: Buffer) => { stdout += data.toString(); });
       proc.stderr?.on("data", (data: Buffer) => { stderr += data.toString(); });
 
-      proc.on("close", (code) => {
-        this.activeProcesses.delete(sessionId);
-        resolve({
-          sessionId,
-          workspacePath,
-          status: code === 0 ? "COMPLETED" : "FAILED",
-          startedAt: new Date().toISOString(),
-          endedAt: new Date().toISOString(),
-           output: redactSecrets(`${stdout}\n${stderr}`.slice(0, 5000)),
-          filesChanged: this.extractFilesChanged(stdout),
-          testsPassed: /passed|OK|success/i.test(stdout),
-          error: code !== 0 ? redactSecrets(stderr.slice(0, 1000)) : null,
-        });
-      });
+      proc.on("close", (code) => { finish(code, stdout, stderr); });
 
       proc.on("error", (err) => {
         this.activeProcesses.delete(sessionId);

@@ -21,7 +21,7 @@ export function createPatient(
     height_cm?: number; weight_kg?: number; goal?: string;
   },
 ): PatientRecord {
-  if (!input.name?.trim()) throw new Error("name is required");
+  if (!input.name?.trim()) throw new Error("patient name is required");
   const inserted = db.prepare(
     `INSERT INTO patients (tenant_id, name, phone, birth_date, gender, height_cm, weight_kg, goal)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`

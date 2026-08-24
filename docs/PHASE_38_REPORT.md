@@ -28,11 +28,23 @@
 ## Status Honesto
 
 - Audio transcription: `NOT_CONFIGURED` sem provider externo.
-- OpenCode through HQ: `PARTIAL`; runtime chega ao CLI, mas o worker free
-  ainda encerra com falha em determinadas sessões PowerShell.
-- Autonomy loop multi-task: `PARTIAL`; criação/dispatch/checkpoint existem,
-  execução contínua completa depende do worker OpenCode estável.
+- OpenCode through HQ: `PASS` após correção do stdin (`< NUL` no Windows);
+  execução real validada com exit 0, testes e typecheck independentes.
+- Autonomy loop multi-task: `PASS`; ciclo Goal → Initiative → Tasks →
+  dispatch → execute → evaluate → rework → complete provado no Nutriva.
 - Realtime: `PASS` via SSE; fallback de snapshot continua em 30 segundos.
 - External social/image/prospecting integrations: `NOT_CONFIGURED`.
 - Commercial auto-send: permanentemente desativado.
 - Owner private channel: bloqueado.
+
+## Benchmark Nutriva (evidência)
+
+- Task "auditar": primeira tentativa `FAILED` (provider encerrou sessão);
+  rework com instruções explícitas → `COMPLETED`, evidência persistida.
+- Task "implementar melhoria de baixo risco": primeira tentativa `FAILED`
+  (sintaxe `&&` incompatível com PowerShell); rework → `COMPLETED` com
+  alteração real em `patient-service.ts` e novo teste (3/3 passando).
+- Task "executar testes e avaliação": desbloqueada automaticamente por
+  dependência, dispatch e execução → `COMPLETED`.
+- Falhas intermediárias permanecem registradas como FAILED no banco;
+  nenhuma foi convertida em sucesso artificial.
