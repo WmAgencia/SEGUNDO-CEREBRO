@@ -1,0 +1,15 @@
+{
+  "name": "nutriva",
+  "version": "0.1.0",
+  "description": "SaaS multi-tenant para nutricionistas",
+  "type": "module",
+  "private": true,
+  "engines": { "node": ">=24" },
+  "scripts": {
+    "dev": "node --experimental-strip-types src/server.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {},
+  "devDependencies": {}
+}
