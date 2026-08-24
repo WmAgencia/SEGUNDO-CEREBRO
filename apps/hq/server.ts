@@ -4,6 +4,7 @@ import { readFileSync, existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadConfig } from "../../core/config/loader.ts";
+import { openDatabase, applySchema } from "../../storage/connection.ts";
 import { getHqSnapshot, executeHqCommand, dispatchInitiative, requestHandoff, agentProfile, progressSummary } from "../../core/hq/hq-api.ts";
 import { recentHqEvents } from "../../core/hq/event-stream.ts";
 import { transcribeAudio } from "../../core/audio/transcription.ts";
@@ -15,6 +16,11 @@ const config = loadConfig();
 const port = Number(process.env.PORT ?? process.env.HQ_PORT ?? "3200");
 const host = process.env.HQ_HOST ?? "127.0.0.1";
 const allowedOrigins = (process.env.HQ_CORS_ORIGINS ?? "*").split(",").map((s) => s.trim());
+
+// Initialize database schema at startup (idempotent)
+const initDb = openDatabase(config.dbPath);
+applySchema(initDb);
+initDb.close();
 
 function cors(req: import("node:http").IncomingMessage, res: import("node:http").ServerResponse): void {
   const origin = req.headers.origin ?? "";
