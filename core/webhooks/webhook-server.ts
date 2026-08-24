@@ -153,32 +153,8 @@ async function autoSendDraft(
     return;
   }
   // Commercial automation is disabled by policy, not by a user-controlled flag.
-  return;
-  try {
-    const parsed = JSON.parse(rawBody);
-    const data = parsed.data as Record<string, unknown> | undefined;
-    const key = data?.key as Record<string, unknown> | undefined;
-    if (!key || key.fromMe) return;
-
-    const remoteJid = String(key.remoteJid ?? "");
-    const phone = remoteJid.split("@")[0];
-    if (!phone) return;
-
-    const intent = result.intent ?? "UNKNOWN";
-
-    const AUTONOMOUS_INTENTS = ["GREETING", "QUESTION", "SERVICE", "INTEREST", "FOLLOW_UP"];
-    if (!AUTONOMOUS_INTENTS.includes(intent)) {
-      // HIGH risk → notify owner instead of sending
-      const draft = extractDraftFromDb(config, externalIdOf(key));
-      void draft;
-      return;
-    }
-
-    const draft = extractDraftFromDb(config, externalIdOf(key));
-    if (!draft) return;
-    const sent = await evolution.sendMessage(result.recipient ?? phone, draft);
-    recordOutbound(config, result.recipient ?? phone, externalIdOf(key), sent.messageId, draft);
-  } catch {}
+  void config;
+  void rawBody;
 }
 
 function recordOutbound(
