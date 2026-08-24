@@ -10,6 +10,7 @@ import { SPECIALIZED_AGENTS } from "../agents/specialized.ts";
 import { setKillSwitch } from "../autonomous/cycle.ts";
 import { OFFICE_DEPARTMENTS, deskPosition, departmentForAgent, officeBounds } from "./office.ts";
 import { managerChat } from "./manager.ts";
+import { getAllAgentStates } from "./agent-state.ts";
 
 export interface HqSnapshot {
   generatedAt: string;
@@ -31,7 +32,13 @@ export function getHqSnapshot(config: BrainConfig): HqSnapshot {
     ensureHqAgents(db);
     const rows = (sql: string, ...values: Array<string | number>): Array<Record<string, unknown>> => db.prepare(sql).all(...values) as unknown as Array<Record<string, unknown>>;
     const agents = listAgents(db) as unknown as Array<Record<string, unknown>>;
-    const withPositions = agents.map((agent) => ({ ...agent, position: deskPosition(String(agent.id)) }));
+    const opStates = getAllAgentStates(db);
+    const stateMap = new Map(opStates.map(s => [s.agentId, s]));
+    const withPositions = agents.map((agent) => {
+      const id = String(agent.id);
+      const op = stateMap.get(id);
+      return { ...agent, position: deskPosition(id), operationalState: op?.state ?? 'OFFLINE', operationalReason: op?.reason ?? null, currentTask: op?.currentTask ?? null, lastActivity: op?.lastActivity ?? null };
+    });
     return {
       generatedAt: new Date().toISOString(),
       office: { departments: OFFICE_DEPARTMENTS, bounds: officeBounds() },

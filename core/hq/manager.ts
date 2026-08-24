@@ -106,20 +106,35 @@ function doChat(text: string, config: BrainConfig, s: ManagerSession): ManagerRe
   if (/^(oi|olá|ola|hey|e aí|eai|bom dia|boa tarde|boa noite)\b/i.test(t))
     return { type:'conversation', mode:s.mode, message:'Oi, Wesley. Sou o Gerente do Second Brain. Posso conversar sobre estratégia, criar objetivos, distribuir tarefas e acompanhar execução. Sobre o que você quer falar?', intent:'CHAT', actions:[], requiresConfirmation:false };
   if (/(tudo bem|tudo certo|como vai|como você está)/i.test(t))
-    return { type:'conversation', mode:s.mode, message:'Tudo funcionando. Tenho acesso ao banco, aos agentes e ao contexto do Second Brain. O que você quer atacar?', intent:'CHAT', actions:[], requiresConfirmation:false };
+    return { type:'conversation', mode:s.mode, message:'Tudo funcionando por aqui. Tenho acesso ao banco, aos agentes e ao contexto. O que você quer atacar?', intent:'CHAT', actions:[], requiresConfirmation:false };
   if (/(você consegue|consegue me ajudar|pode me ajudar|pode ajudar|como funciona)/i.test(t))
-    return { type:'conversation', mode:s.mode, message:'Consigo te ajudar a planejar objetivos, distribuir tarefas para os agentes, consultar o Second Brain e acompanhar execução. Você pode conversar comigo naturalmente — quando tivermos um plano, eu peço confirmação antes de executar.', intent:'CHAT', actions:[], requiresConfirmation:false };
+    return { type:'conversation', mode:s.mode, message:'Consigo te ajudar a planejar objetivos, distribuir tarefas, consultar o Second Brain e acompanhar execução. Quando tivermos um plano, eu peço sua confirmação antes de executar. Sobre o que quer conversar?', intent:'CHAT', actions:[], requiresConfirmation:false };
   if (/(obrigado|valeu|show|legal|bacana|ótimo|otimo|perfeito)/i.test(t))
     return { type:'conversation', mode:s.mode, message:'Disponha. Estou aqui quando precisar.', intent:'CHAT', actions:[], requiresConfirmation:false };
-  if (/(prospec|prospecção|prospection)/i.test(t))
-    return { type:'conversation', mode:s.mode, message:'Sobre prospecção — temos o Prospector e o Comercial trabalhando nisso. Podemos focar em aumentar volume de leads, melhorar a qualificação, ou os dois. Qual dessas direções te interessa mais?', intent:'CHAT', actions:[], requiresConfirmation:false };
-  if (/(campanha|campanhas)/i.test(t))
+  if (/(prospec|prospecção|prospection|prospectar)/i.test(t)) {
+    s.topic = 'prospecção';
+    return { type:'conversation', mode:s.mode, message:'Sobre prospecção — temos o Prospector e o Comercial trabalhando nisso. Podemos focar em aumentar volume de leads, melhorar a qualificação, ou os dois. Qual direção te interessa mais?', intent:'CHAT', actions:[], requiresConfirmation:false };
+  }
+  if (/(qualidade|qualificar|qualificação)/i.test(t) && s.topic === 'prospecção')
+    return { type:'conversation', mode:s.mode, message:'Entendi, foco em qualidade. O Prospector pode filtrar melhor os leads antes de passar para o Comercial. Posso criar um objetivo para melhorar o processo de qualificação. Quer que eu monte um plano?', intent:'CHAT', actions:[], requiresConfirmation:false };
+  if (/(volume|quantidade|mais leads)/i.test(t) && s.topic === 'prospecção')
+    return { type:'conversation', mode:s.mode, message:'Aumentar volume faz sentido. Podemos ampliar as fontes de prospecção e acelerar o pipeline. Quer que eu monte um objetivo com tarefas para o Prospector?', intent:'CHAT', actions:[], requiresConfirmation:false };
+  if (/(campanha|campanhas)/i.test(t)) {
+    s.topic = 'campanhas';
     return { type:'conversation', mode:s.mode, message:'Posso analisar campanhas anteriores no Second Brain e montar uma estratégia. Você tem em mente algum público ou canal específico?', intent:'CHAT', actions:[], requiresConfirmation:false };
+  }
+  if (/(vendas|vender|faturar|receita|receita)/i.test(t) && !s.pending) {
+    s.topic = 'vendas';
+    return { type:'conversation', mode:s.mode, message:'Sobre vendas — podemos atacar por prospecção, marketing ou melhorar a conversão do comercial. Qual dessas frentes você quer priorizar?', intent:'CHAT', actions:[], requiresConfirmation:false };
+  }
   if (/(não|nao|deixa|depois|ainda não)/i.test(t) && s.pending)
     return { type:'conversation', mode:s.mode, message:'Sem problema. O plano fica guardado — quando quiser executar, é só dizer "pode executar".', intent:'CHAT', actions:[], requiresConfirmation:false };
 
-  const lastTopic = s.topic ? ` Sobre ${s.topic}, ` : '';
-  return { type:'conversation', mode:s.mode, message:`${lastTopic}entendi. Quer que eu analise isso mais a fundo ou transforme em algo acionável?`, intent:'CHAT', actions:[], requiresConfirmation:false };
+  // Context-aware follow-up using topic
+  if (s.topic) {
+    return { type:'conversation', mode:s.mode, message:`Sobre ${s.topic} — quer que eu aprofunde a análise ou transforme em um objetivo acionável?`, intent:'CHAT', actions:[], requiresConfirmation:false };
+  }
+  return { type:'conversation', mode:s.mode, message:'Entendi. Quer que eu analise mais a fundo ou transforme em algo acionável? Posso também consultar o Second Brain se quiser contexto específico.', intent:'CHAT', actions:[], requiresConfirmation:false };
 }
 
 function doIdea(text: string, config: BrainConfig, s: ManagerSession): ManagerResponse {
@@ -129,6 +144,7 @@ function doIdea(text: string, config: BrainConfig, s: ManagerSession): ManagerRe
 
 function doQuestion(text: string, config: BrainConfig, s: ManagerSession): ManagerResponse {
   const t = text.toLowerCase();
+  if (s.mode === 'brain') return brainQuery(text, config, s);
   if (/(vyntra|nutriva|consecom)/i.test(t)) {
     const proj = t.match(/(vyntra|nutriva|consecom)/i)?.[1] ?? 'projeto';
     s.topic = proj;
@@ -143,6 +159,26 @@ function doQuestion(text: string, config: BrainConfig, s: ManagerSession): Manag
     return { type:'status', mode:s.mode, message:`Situação: ${ctx}. Posso detalhar o que cada agente está fazendo se quiser.`, intent:'STATUS', actions:[], requiresConfirmation:false };
   }
   return { type:'conversation', mode:s.mode, message:'Boa pergunta. Posso consultar o Second Brain para te responder com precisão. O que especificamente você quer saber?', intent:'QUESTION', actions:[], requiresConfirmation:false };
+}
+
+function brainQuery(text: string, config: BrainConfig, s: ManagerSession): ManagerResponse {
+  const db = new DatabaseSync(config.dbPath);
+  try {
+    const terms = text.toLowerCase().match(/[\p{L}\p{N}]{3,}/gu)?.slice(0, 5) ?? [];
+    let results: string[] = [];
+    for (const term of terms) {
+      const mems = db.prepare("SELECT content FROM memories_fts WHERE memories_fts MATCH ? LIMIT 3").all(`"${term}"`) as unknown as Array<{ content: string }>;
+      results.push(...mems.map(m => m.content.slice(0, 120)));
+      if (results.length >= 5) break;
+    }
+    const goals = db.prepare("SELECT name,status FROM goals WHERE status='ACTIVE' LIMIT 5").all() as unknown as Array<{name:string;status:string}>;
+    const goalStr = goals.map(g => g.name).join(', ');
+    if (results.length === 0 && goals.length === 0)
+      return { type:'brain', mode:s.mode, message:'Consultei o Second Brain mas não encontrei contexto relevante para essa consulta. Quer que eu procure por outro termo?', intent:'QUESTION', actions:[], requiresConfirmation:false };
+    const ctx = results.length ? `\n\nContexto encontrado:\n${results.slice(0,3).map(r=>`• ${r}`).join('\n')}` : '';
+    const goalCtx = goals.length ? `\n\nObjetivos ativos: ${goalStr}` : '';
+    return { type:'brain', mode:s.mode, message:`Consultei o Second Brain.${ctx}${goalCtx}`, intent:'QUESTION', actions:[], requiresConfirmation:false };
+  } finally { db.close(); }
 }
 
 function doStatus(config: BrainConfig, s: ManagerSession): ManagerResponse {

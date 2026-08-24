@@ -53,11 +53,16 @@ function renderFloor(data){
   for(const ag of data.agents){
     const id=String(ag.id),pos=ag.position;if(!pos)continue;
     state.agentsById[id]=ag;
-    const color=COLORS[id]||'#999',hair=HAIR[id]||color,cls=stCls(ag.status);
-    h+=`<div class="agent ${cls}" id="agent-${esc(id)}" style="left:${pos.x}px;top:${pos.y-50}px" data-agent="${esc(id)}" title="${esc(ag.name)} — ${esc(stPt(ag.status))}"><span class="nametag">${esc(ag.name)}</span><div class="hair" style="background:${hair}"></div><div class="head"></div><div class="body" style="background:${color}"></div><div class="sdot"></div></div>`;
+    const color=COLORS[id]||'#999',hair=HAIR[id]||color;
+    const opState=ag.operationalState||ag.status;
+    const cls=stCls(opState);
+    h+=`<div class="agent ${cls}" id="agent-${esc(id)}" style="left:${pos.x}px;top:${pos.y-50}px" data-agent="${esc(id)}" title="${esc(ag.name)} — ${esc(stPt(opState))}${ag.operationalReason?' ('+esc(ag.operationalReason)+')':''}"><span class="nametag">${esc(ag.name)}</span><div class="hair" style="background:${hair}"></div><div class="head"></div><div class="body" style="background:${color}"></div><div class="sdot"></div></div>`;
   }
   f.innerHTML=h;
-  for(const ag of data.agents){if(stCls(ag.status)==='st-working'){const m=f.querySelector(`[data-mon="${CSS.escape(String(ag.id))}"]`);if(m)m.classList.add('on')}}
+  for(const ag of data.agents){
+    const opState=ag.operationalState||ag.status;
+    if(stCls(opState)==='st-working'){const m=f.querySelector(`[data-mon="${CSS.escape(String(ag.id))}"]`);if(m)m.classList.add('on')}
+  }
   f.querySelectorAll('.agent').forEach(el=>el.addEventListener('click',()=>openProfile(el.dataset.agent)));
 }
 
