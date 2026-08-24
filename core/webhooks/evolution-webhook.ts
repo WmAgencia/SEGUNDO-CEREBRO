@@ -10,7 +10,9 @@ import {
   classifyIntent,
   getCustomerProfile,
   nextBestAction,
+  nextBestQuestion,
   stageForIntent,
+  updateProfileFromMessage,
   updateCustomerProfile,
 } from "../comms/pipeline.ts";
 import * as evolution from "../comms/evolution-api.ts";
@@ -145,7 +147,10 @@ function processIncomingMessage(
     depth: 1,
     maxChars: 4000,
   });
+  const profilePatch = updateProfileFromMessage(profile, content);
+  const question = nextBestQuestion({ ...profile, ...profilePatch });
   updateCustomerProfile(db, contact.id, {
+    ...profilePatch,
     sales_stage: stageForIntent(intent),
     next_action: next.action,
     service_interest:
@@ -156,11 +161,15 @@ function processIncomingMessage(
       intent === "OBJECTION" || intent === "NEGOTIATION"
         ? [...new Set([...profile.objections, content])]
         : profile.objections,
+    asked_questions:
+      question && next.action === "QUALIFY"
+        ? [...new Set([...profile.asked_questions, question.key])]
+        : profile.asked_questions,
   });
   db.prepare(
     "UPDATE wa_conversations SET status='ACTIVE', sales_stage=?, last_intent=?, next_action=? WHERE id=?",
   ).run(stageForIntent(intent), intent, next.action, conversation.id);
-  const draft = generateDraft(intent, msgContent);
+  const draft = generateDraft(intent, msgContent, question);
 
   if (next.action === "REQUEST_HUMAN") {
     const approval = db
@@ -220,16 +229,20 @@ function safeObject(raw: string): Record<string, unknown> {
   }
 }
 
-function generateDraft(intent: string, _customerMsg: string): string {
+function generateDraft(
+  intent: string,
+  _customerMsg: string,
+  question: { key: string; text: string } | null,
+): string {
   switch (intent) {
     case "GREETING":
       return "Olá! Obrigado pelo contato. Como posso ajudar você hoje?";
     case "PRICE":
       return "Nossos valores variam conforme o escopo do projeto. Posso entender melhor o que você precisa para te passar uma proposta personalizada?";
     case "SERVICE":
-      return "Trabalhamos com criação de sites, sistemas e automações. Que tipo de solução você está buscando?";
+      return question?.text ?? "Perfeito. Vou entender o escopo para indicar a melhor solução.";
     case "INTEREST":
-      return "Que ótimo! Me conta mais sobre seu projeto que eu te mostro como podemos ajudar.";
+      return question?.text ?? "Ótimo. Qual resultado você espera alcançar com esse projeto?";
     case "OBJECTION":
       return "Entendo sua preocupação. Cada projeto é único e trabalhamos com propostas personalizadas. Podemos conversar melhor sobre isso?";
     default:
