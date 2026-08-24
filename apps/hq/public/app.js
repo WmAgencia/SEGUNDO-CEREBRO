@@ -1,133 +1,147 @@
-const $ = (id) => document.getElementById(id);
-const state = { data: null, agentsById: {} };
-const CELL = 40;
-const API = (window.HQ_API_URL ?? '').replace(/\/$/, '');
+const $=id=>document.getElementById(id);
+const API=(window.HQ_API_URL??'').replace(/\/$/,'');
+const state={data:null,agentsById:{}};
+const CELL=40;
 
-function esc(v) { return String(v ?? '').replace(/[&<>'"]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c])); }
+const STATUS_PT={AVAILABLE:'Disponível',ACTIVE:'Ativo',IDLE:'Parado',WORKING:'Trabalhando',RUNNING:'Executando',PLANNING:'Planejando',PAUSED:'Pausado',WAITING:'Em espera',BLOCKED:'Bloqueado',FAILED:'Com erro',COMPLETED:'Concluído',HANDOFF:'Transferindo'};
+function statusPt(s){return STATUS_PT[String(s||'').toUpperCase()]??String(s||'').toLowerCase()}
+function stClass(s){const k=String(s||'').toUpperCase();if(['WORKING','RUNNING','PLANNING'].includes(k))return'st-working';if(['BLOCKED','FAILED'].includes(k))return'st-blocked';if(['AVAILABLE','ACTIVE'].includes(k))return'st-available';if(s==='COMPLETED')return'st-completed';if(['PAUSED','WAITING','HANDOFF'].includes(k))return'st-paused';return'st-idle'}
+function esc(v){return String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]))}
+function toast(msg){const t=$('toast');t.textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),3000)}
 
-function agentStateClass(status) {
-  const s = String(status || '').toUpperCase();
-  if (['WORKING','RUNNING','PLANNING'].includes(s)) return 'state-working';
-  if (['BLOCKED','FAILED','ERROR'].includes(s)) return 'state-blocked';
-  if (['AVAILABLE','ACTIVE'].includes(s)) return 'state-available';
-  if (['PAUSED','WAITING','HANDOFF'].includes(s)) return 'state-paused';
-  if (s === 'COMPLETED') return 'state-completed';
-  return 'state-idle';
-}
+/* ── RENDER FLOOR ── */
+const AGENT_COLORS={manager:'#5cb894','marketing-agent':'#e0a458','designer-agent':'#b39ddb','social-media-agent':'#6ba3c9','traffic-agent':'#f0b27a','prospector-agent':'#82c99a','research-agent':'#c9b8db','sales-agent-01':'#e6a8a8','sales-agent-02':'#d4979a','sales-agent-03':'#c98a8d','sales-agent-04':'#bd7d80','engineering-agent':'#9db8d2','maintenance-agent':'#a0a8a0'};
 
-function renderFloor(data) {
-  const floor = $('floor');
-  floor.style.width = data.office.bounds.w + 'px';
-  floor.style.height = data.office.bounds.h + 'px';
-
-  let html = '';
-  for (const dept of data.office.departments) {
-    const a = dept.area;
-    html += `<div class="dept-area" style="left:${a.x*CELL}px;top:${a.y*CELL}px;width:${a.w*CELL}px;height:${a.h*CELL}px"><div class="dept-plate">${esc(dept.label)}</div></div>`;
-    for (const [agentId, pos] of Object.entries(dept.desks)) {
-      html += `<div class="desk-item" style="left:${pos.x-26}px;top:${pos.y-15}px" data-agent="${esc(agentId)}"><div class="desk-monitor"></div></div>`;
+function renderFloor(data){
+  const f=$('floor');
+  f.style.width=data.office.bounds.w+'px';
+  f.style.height=data.office.bounds.h+'px';
+  let h='';
+  for(const dept of data.office.departments){
+    const a=dept.area;
+    h+=`<div class="dept-area" style="left:${a.x*CELL}px;top:${a.y*CELL}px;width:${a.w*CELL}px;height:${a.h*CELL}px"><div class="dept-plate">${esc(dept.label)}</div></div>`;
+    for(const[aid,pos]of Object.entries(dept.desks)){
+      h+=`<div class="desk-chair" style="left:${pos.x-12}px;top:${pos.y+18}px"></div>`;
+      h+=`<div class="desk-item" style="left:${pos.x-28}px;top:${pos.y-16}px"><div class="desk-monitor" data-mon="${esc(aid)}"></div></div>`;
     }
   }
-
-  for (const agent of data.agents) {
-    const id = String(agent.id); const pos = agent.position;
-    if (!pos) continue;
-    state.agentsById[id] = agent;
-    const cls = agentStateClass(agent.status);
-    const color = { manager:'#86c7b1','marketing-agent':'#d8a968','designer-agent':'#c39bd3','social-media-agent':'#7fb3d5','traffic-agent':'#f0b27a','prospector-agent':'#82c99a','commercial-agent':'#e6a8a8','engineering-agent':'#9db8d2','research-agent':'#c9b8db','maintenance-agent':'#a8a8a8' }[id] || '#999';
-    html += `<div class="agent ${cls}" id="agent-${esc(id)}" style="left:${pos.x}px;top:${pos.y-38}px" data-agent="${esc(id)}" title="${esc(agent.name)}">
-      <span class="name-tag">${esc(String(agent.name).split(' ')[0])}</span>
-      <div class="body" style="background:${color}"></div><div class="head"></div><div class="state-dot"></div></div>`;
+  for(const ag of data.agents){
+    const id=String(ag.id);const pos=ag.position;if(!pos)continue;
+    state.agentsById[id]=ag;
+    const color=AGENT_COLORS[id]||'#999';
+    const cls=stClass(ag.status);
+    h+=`<div class="agent ${cls}" id="agent-${esc(id)}" style="left:${pos.x}px;top:${pos.y-44}px" data-agent="${esc(id)}" title="${esc(ag.name)} — ${esc(statusPt(ag.status))}"><span class="nametag">${esc(ag.name)}</span><div class="head"></div><div class="body" style="background:${color}"></div><div class="sdot"></div></div>`;
   }
-  floor.innerHTML = html;
-  floor.querySelectorAll('.agent').forEach((el) => el.addEventListener('click', () => openProfile(el.dataset.agent)));
+  f.innerHTML=h;
+  // Turn on monitors for working agents
+  for(const ag of data.agents){
+    if(stClass(ag.status)==='st-working'){const mon=f.querySelector(`[data-mon="${CSS.escape(String(ag.id))}"]`);if(mon)mon.classList.add('on')}
+  }
+  f.querySelectorAll('.agent').forEach(el=>el.addEventListener('click',()=>openProfile(el.dataset.agent)));
 }
 
-function animateMovement(eventData) {
-  const agentId = eventData.agentId; if (!agentId) return;
-  const targetId = eventData.to; if (!targetId) return;
-  const targetAgent = state.agentsById[targetId]; if (!targetAgent?.position) return;
-  const el = document.getElementById(`agent-${CSS.escape(agentId)}`); if (!el) return;
+/* ── MOVEMENT ── */
+function animateMove(d){
+  const aid=d.agentId,tid=d.to;if(!aid||!tid)return;
+  const target=state.agentsById[tid];if(!target?.position)return;
+  const el=document.getElementById(`agent-${CSS.escape(aid)}`);if(!el)return;
   el.classList.add('moving');
-  const origLeft = el.style.left, origTop = el.style.top;
-  el.style.left = targetAgent.position.x + 'px'; el.style.top = (targetAgent.position.y - 38) + 'px';
-  setTimeout(() => { el.style.left = origLeft; el.style.top = origTop; setTimeout(() => el.classList.remove('moving'), 900); }, 1600);
+  const ol=el.style.left,ot=el.style.top;
+  el.style.left=target.position.x+'px';el.style.top=(target.position.y-44)+'px';
+  setTimeout(()=>{el.style.left=ol;el.style.top=ot;setTimeout(()=>el.classList.remove('moving'),1300)},1800);
 }
 
-function render(data) {
-  state.data = data;
-  renderFloor(data);
-  const active = data.goals.filter((g) => g.status === 'ACTIVE').length;
-  const running = data.agents.filter((a) => ['WORKING','RUNNING','PLANNING'].includes(String(a.status).toUpperCase())).length;
-  const open = data.tasks.filter((t) => !['COMPLETED','CANCELLED','FAILED'].includes(String(t.status).toUpperCase())).length;
-  [$('metrics').children[0],$('metrics').children[1],$('metrics').children[2],$('metrics').children[3]].forEach((node, i) => node.querySelector('strong').textContent = [active,running,open,data.approvals.length][i]);
-  $('updated').textContent = `Atualizado ${new Date(data.generatedAt).toLocaleTimeString('pt-BR')}`;
-  $('task-count').textContent = `${data.tasks.length} TOTAL`;
-  const columns = { TODO:['PENDING','READY'], DOING:['ASSIGNED','RUNNING','WAITING'], BLOCKED:['BLOCKED','FAILED'], DONE:['COMPLETED'] };
-  $('board').innerHTML = Object.entries(columns).map(([label, statuses]) => {
-    const items = data.tasks.filter((t) => statuses.includes(String(t.status).toUpperCase())).slice(0, 4);
-    return `<div class="board-col"><h4>${label} (${items.length})</h4>${items.map((t) => `<div class="board-card"><b>${esc(t.title)}</b><span>${esc(t.assigned_agent || 'unassigned')} · ${esc(String(t.status).toLowerCase())}</span></div>`).join('') || '<div class="board-card" style="color:#5a6560">vazio</div>'}</div>`;
-  }).join('');
-  $('events').innerHTML = data.events.slice(0,10).map((e) => `<div class="event-row"><b>${esc(e.event_type)}</b><span>${esc(e.subject || 'system')}</span></div>`).join('') || '<div class="goal-meta">Aguardando sinais.</div>';
+/* ── RENDER DATA ── */
+function render(data){
+  state.data=data;renderFloor(data);
+  $('metrics').children[0].querySelector('b').textContent=data.goals.filter(g=>g.status==='ACTIVE').length;
+  $('metrics').children[1].querySelector('b').textContent=data.tasks.filter(t=>!['COMPLETED','CANCELLED','FAILED'].includes(String(t.status).toUpperCase())).length;
+  $('metrics').children[2].querySelector('b').textContent=data.agents.filter(a=>['WORKING','RUNNING','PLANNING'].includes(String(a.status).toUpperCase())).length;
+  $('metrics').children[3].querySelector('b').textContent=data.approvals.length;
+  $('task-count').textContent=`${data.tasks.length} no total`;
+  const cols={'A fazer':['PENDING','READY'],'Em andamento':['ASSIGNED','RUNNING','WAITING'],'Bloqueadas':['BLOCKED','FAILED'],'Concluídas':['COMPLETED']};
+  $('board').innerHTML=Object.entries(cols).map(([label,st])=>{
+    const items=data.tasks.filter(t=>st.includes(String(t.status).toUpperCase())).slice(0,4);
+    return `<div class="board-col"><h4>${label} (${items.length})</h4>${items.map(t=>`<div class="b-card"><b>${esc(t.title)}</b><small>${esc(t.assigned_agent||'sem agente')} · ${esc(statusPt(t.status))}</small></div>`).join('')||'<div class="b-card muted">vazio</div>'}</div>`}).join('');
+  $('events').innerHTML=data.events.slice(0,10).map(e=>`<div class="ev-row"><b>${esc(e.event_type)}</b><span>${esc(e.subject||'sistema')}</span></div>`).join('')||'<p class="muted">Aguardando eventos…</p>';
 }
 
-async function refresh() {
-  try {
-    const r = await fetch(`${API}/api/hq/state`); if (!r.ok) throw new Error();
+async function refresh(){
+  try{
+    const r=await fetch(`${API}/api/hq/state`);if(!r.ok)throw new Error();
     render(await r.json());
-    $('connection').textContent = 'LIVE'; document.querySelector('.pulse').style.background = 'var(--teal)';
-  } catch { $('connection').textContent = 'OFFLINE'; document.querySelector('.pulse').style.background = 'var(--red)'; }
+    $('conn-status').textContent='ONLINE';$('conn-status').className='online';$('pulse').style.background='var(--accent)';
+  }catch{$('conn-status').textContent='OFFLINE';$('conn-status').className='offline';$('pulse').style.background='var(--red)'}
 }
 
-async function openProfile(agentId) {
-  $('profile-panel').classList.add('open'); $('profile-content').innerHTML = '<p class="goal-meta">Carregando...</p>';
-  try {
-    const p = await (await fetch(`${API}/api/hq/agent/${encodeURIComponent(agentId)}`)).json();
-    const a = p.agent ?? {}; let domains = [];
-    try { domains = JSON.parse(a.domains ?? '[]'); } catch {}
-    $('profile-content').innerHTML = `
-      <div class="profile-section"><h4>AGENT PROFILE</h4><p style="margin:0;font-size:18px;font-weight:600">${esc(a.name)}</p>
-      <small>${esc(p.department || domains.join(', ') || '—')} · ${esc(String(a.status).toLowerCase())}</small></div>
-      <div class="profile-section"><h4>TASKS</h4>${(p.tasks??[]).map((t)=>`<div class="profile-item"><b>${esc(t.title)}</b><small>${esc(t.status)}${t.completed_at?' · '+esc(t.completed_at.slice(0,16)):''}</small></div>`).join('')||'<div class="goal-meta">Nenhuma.</div>'}</div>
-      <div class="profile-section"><h4>HANDOFFS</h4>${(p.handoffs??[]).map((h)=>`<div class="profile-item">${esc(h.from_agent)} → ${esc(h.to_agent)}<small>${esc(h.summary.slice(0,60))}</small></div>`).join('')||'<div class="goal-meta">Nenhum.</div>'}</div>
-      <div class="profile-section"><h4>RUNS</h4>${(p.runs??[]).map((r)=>`<div class="profile-item">${esc(r.id.slice(0,20))}<small>${esc(r.state)} · step ${esc(r.current_step)}</small></div>`).join('')||'<div class="goal-meta">Nenhum.</div>'}</div>`;
-  } catch { $('profile-content').innerHTML = '<p class="goal-meta">Erro ao carregar perfil.</p>'; }
+/* ── AGENT PROFILE ── */
+async function openProfile(aid){
+  $('profile-panel').classList.add('open');$('profile-content').innerHTML='<p class="muted">Carregando…</p>';
+  try{
+    const p=await(await fetch(`${API}/api/hq/agent/${encodeURIComponent(aid)}`)).json();
+    if(!p?.agent){$('profile-content').innerHTML='<p class="muted">Agente não encontrado.</p>';return}
+    let domains=[];try{domains=JSON.parse(p.agent.domains??'[]')}catch{}
+    const deptName=p.department||domains.join(', ')||'—';
+    $('profile-content').innerHTML=`
+      <div class="profile-section"><h4>${esc(p.agent.name)}</h4>
+      <p class="muted">${esc(deptName)}</p>
+      <p style="margin-top:6px;font-size:14px">${esc(statusPt(p.agent.status))}</p></div>
+      <div class="profile-section"><h4>Tarefas</h4>${(p.tasks??[]).map(t=>`<div class="p-item"><b>${esc(t.title)}</b><small>${esc(statusPt(t.status))}${t.completed_at?' · '+t.completed_at.slice(0,16):''}</small></div>`).join('')||'<p class="muted">Nenhuma.</p>'}</div>
+      <div class="profile-section"><h4>Handoffs</h4>${(p.handoffs??[]).map(h=>`<div class="p-item">${esc(h.from_agent)} → ${esc(h.to_agent)}<small>${esc(h.summary.slice(0,60))}</small></div>`).join('')||'<p class="muted">Nenhum.</p>'}</div>
+      <div class="profile-section"><h4>Runs</h4>${(p.runs??[]).map(r=>`<div class="p-item">${esc(r.id.slice(0,22))}<small>${esc(r.state)} · etapa ${r.current_step} · tentativas ${r.retry_count}</small></div>`).join('')||'<p class="muted">Nenhum.</p>'}</div>`;
+  }catch{$('profile-content').innerHTML='<p class="muted">Erro ao carregar.</p>'}
 }
-$('profile-close').addEventListener('click', () => $('profile-panel').classList.remove('open'));
+$('profile-close').addEventListener('click',()=>$('profile-panel').classList.remove('open'));
 
-$('execute').addEventListener('click', async () => {
-  const text = $('command').value; if (!text.trim()) return;
-  $('command-result').textContent = 'Manager processando...';
-  try {
-    const result = await (await fetch(`${API}/api/hq/command`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({text}) })).json();
-    $('command-result').textContent = result.message;
-    if (result.ok) { $('command').value = ''; await refresh(); }
-  } catch { $('command-result').textContent = 'Control plane indisponível.'; }
+/* ── COMMAND CENTER ── */
+$('btn-command').addEventListener('click',()=>$('cmd-overlay').classList.add('open'));
+document.querySelectorAll('[data-close]').forEach(b=>b.addEventListener('click',()=>b.closest('.overlay').classList.remove('open')));
+$('cmd-overlay').addEventListener('click',e=>{if(e.target===e.currentTarget)e.currentTarget.classList.remove('open')});
+
+$('btn-send').addEventListener('click',async()=>{
+  const text=$('command-input').value;if(!text.trim())return;
+  $('command-result').textContent='Orquestrador processando…';
+  try{
+    const r=await(await fetch(`${API}/api/hq/command`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})})).json();
+    $('command-result').textContent=r.message;
+    if(r.ok){$('command-input').value='';toast('✓ Comando executado');await refresh();setTimeout(()=>$('cmd-overlay').classList.remove('open'),2000)}
+  }catch{$('command-result').textContent='Backend indisponível.'}
 });
-$('command').addEventListener('keydown', (e) => { if ((e.ctrlKey||e.metaKey)&&e.key==='Enter') $('execute').click(); });
+$('command-input').addEventListener('keydown',e=>{if((e.ctrlKey||e.metaKey)&&e.key==='Enter')$('btn-send').click()});
 
-let recorder; let chunks=[]; let recordingStarted;
-$('voice').addEventListener('click', async () => {
-  if (recorder?.state==='recording'){recorder.stop();return}
-  if (!navigator.mediaDevices?.getUserMedia||!window.MediaRecorder){$('command-result').textContent='Áudio indisponível neste navegador.';return}
-  try {
-    const stream=await navigator.mediaDevices.getUserMedia({audio:true}); chunks=[]; recordingStarted=Date.now();
-    recorder=new MediaRecorder(stream); recorder.ondataavailable=(e)=>chunks.push(e.data);
-    recorder.onstop=async()=>{ stream.getTracks().forEach((t)=>t.stop()); $('voice').querySelector('span').textContent='ÁUDIO';
-      const blob=new Blob(chunks,{type:recorder.mimeType||'audio/webm'}); const bytes=new Uint8Array(await blob.arrayBuffer());
-      let bin=''; bytes.forEach((b)=>bin+=String.fromCharCode(b));
-      const result=await(await fetch(`${API}/api/hq/transcribe`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({audio:btoa(bin),mimeType:blob.type,durationMs:Date.now()-recordingStarted})})).json();
+$('btn-pause').addEventListener('click',async()=>{
+  try{const r=await(await fetch(`${API}/api/hq/command`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:'pare tudo'})})).json();toast(r.message);await refresh()}catch{toast('Erro ao pausar.')}
+});
+$('btn-resume').addEventListener('click',async()=>{
+  try{const r=await(await fetch(`${API}/api/hq/command`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:'continue'})})).json();toast(r.message);await refresh()}catch{toast('Erro ao retomar.')}
+});
+
+/* ── VOICE ── */
+let recorder,chunks=[],recStart;
+$('btn-voice').addEventListener('click',async()=>{
+  if(recorder?.state==='recording'){recorder.stop();return}
+  if(!navigator.mediaDevices?.getUserMedia||!window.MediaRecorder){$('command-result').textContent='Áudio não suportado neste navegador.';return}
+  try{
+    const stream=await navigator.mediaDevices.getUserMedia({audio:true});chunks=[];recStart=Date.now();
+    recorder=new MediaRecorder(stream);recorder.ondataavailable=e=>chunks.push(e.data);
+    recorder.onstop=async()=>{
+      stream.getTracks().forEach(t=>t.stop());$('btn-voice').textContent='🎙️ Falar';
+      $('command-result').textContent='Transcrevendo…';
+      const blob=new Blob(chunks,{type:recorder.mimeType||'audio/webm'});
+      const bytes=new Uint8Array(await blob.arrayBuffer());let bin='';bytes.forEach(b=>bin+=String.fromCharCode(b));
+      const result=await(await fetch(`${API}/api/hq/transcribe`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({audio:btoa(bin),mimeType:blob.type,durationMs:Date.now()-recStart})})).json();
       if(result.status!=='TRANSCRIBED'){$('command-result').textContent=result.status;return}
-      $('command').value=result.text; $('command-result').textContent='Transcrição recebida. Revise e execute.'};
-    recorder.start(); $('voice').querySelector('span').textContent='PARAR'; $('command-result').textContent='Gravando...';
-  } catch { $('command-result').textContent='Microfone recusado.'; }
+      $('command-input').value=result.text;$('command-result').textContent='Transcrição pronta. Revise e envie.';
+    };
+    recorder.start();$('btn-voice').textContent='⏹ Parar';$('command-result').textContent='Gravando…';
+  }catch{$('command-result').textContent='Microfone recusado.'}
 });
 
-if (window.EventSource) {
-  const es = new EventSource(`${API}/api/hq/events`);
-  es.onmessage = (msg) => { try { const ev = JSON.parse(msg.data); if (ev.type==='AGENT_MOVE'||ev.type==='HANDOFF_CREATED') animateMovement(ev.payload||{}); } catch {} refresh(); };
-  es.onerror = () => { $('connection').textContent='RECONNECTING'; };
+/* ── SSE + INIT ── */
+if(window.EventSource){
+  const es=new EventSource(`${API}/api/hq/events`);
+  es.onmessage=msg=>{try{const ev=JSON.parse(msg.data);if(ev.type==='AGENT_MOVE'||ev.type==='HANDOFF_CREATED')animateMove(ev.payload||{})}catch{}refresh()};
+  es.onerror=()=>{$('conn-status').textContent='RECONECTANDO'};
 }
-
-setInterval(()=>{const c=$('clock');if(c)c.textContent=new Date().toLocaleTimeString('pt-BR')},1000);
-setInterval(refresh,30000); refresh();
+setInterval(()=>{const c=document.querySelector('.clock');if(c)c.textContent=new Date().toLocaleTimeString('pt-BR')},1000);
+setInterval(refresh,30000);refresh();

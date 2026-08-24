@@ -1,15 +1,18 @@
 export interface SpecializedAgentDefinition { id: string; name: string; department: string; responsibilities: string[]; permissions: string[]; }
 export const SPECIALIZED_AGENTS: readonly SpecializedAgentDefinition[] = [
-  { id: "manager", name: "Manager", department: "MANAGER / GESTÃO", responsibilities: ["planning", "delegation", "evaluation"], permissions: ["context", "orchestration"] },
-  { id: "marketing-agent", name: "Marketing Agent", department: "MARKETING", responsibilities: ["strategy", "campaigns", "offers"], permissions: ["context"] },
-  { id: "designer-agent", name: "Designer Agent", department: "DESIGN", responsibilities: ["briefs", "creative-adaptation"], permissions: ["context"] },
-  { id: "social-media-agent", name: "Social Media Agent", department: "SOCIAL MEDIA", responsibilities: ["calendar", "copy", "publishing"], permissions: ["context"] },
-  { id: "traffic-agent", name: "Traffic Agent", department: "TRÁFEGO PAGO", responsibilities: ["metrics", "experiments", "budget-review"], permissions: ["context"] },
-  { id: "prospector-agent", name: "Prospector Agent", department: "PROSPECÇÃO", responsibilities: ["qualification", "deduplication"], permissions: ["context"] },
-  { id: "commercial-agent", name: "Commercial Agent", department: "COMERCIAL", responsibilities: ["queue", "follow-up"], permissions: ["context"] },
-  { id: "engineering-agent", name: "Engineering Agent", department: "DESENVOLVIMENTO", responsibilities: ["implementation", "testing"], permissions: ["context", "execute"] },
-  { id: "research-agent", name: "Research Agent", department: "PESQUISA / INTELIGÊNCIA", responsibilities: ["research", "synthesis"], permissions: ["context"] },
-  { id: "maintenance-agent", name: "Maintenance Agent", department: "MANUTENÇÃO", responsibilities: ["cleanup", "health"], permissions: ["context"] },
+  { id: "manager", name: "Gerente", department: "MANAGER / GESTÃO", responsibilities: ["planejamento", "delegação", "avaliação"], permissions: ["context", "orchestration"] },
+  { id: "marketing-agent", name: "Marketing", department: "MARKETING", responsibilities: ["estratégia", "campanhas", "ofertas"], permissions: ["context"] },
+  { id: "designer-agent", name: "Designer", department: "MARKETING", responsibilities: ["briefs", "criativos"], permissions: ["context"] },
+  { id: "social-media-agent", name: "Mídias Sociais", department: "MARKETING", responsibilities: ["calendário", "publicação"], permissions: ["context"] },
+  { id: "traffic-agent", name: "Tráfego Pago", department: "MARKETING", responsibilities: ["métricas", "orçamento"], permissions: ["context"] },
+  { id: "prospector-agent", name: "Prospector", department: "PROSPECÇÃO", responsibilities: ["qualificação", "pesquisa"], permissions: ["context"] },
+  { id: "research-agent", name: "Pesquisa", department: "PROSPECÇÃO", responsibilities: ["pesquisa", "síntese"], permissions: ["context"] },
+  { id: "sales-agent-01", name: "Atendente 1", department: "COMERCIAL", responsibilities: ["atendimento", "follow-up"], permissions: ["context"] },
+  { id: "sales-agent-02", name: "Atendente 2", department: "COMERCIAL", responsibilities: ["atendimento", "follow-up"], permissions: ["context"] },
+  { id: "sales-agent-03", name: "Atendente 3", department: "COMERCIAL", responsibilities: ["atendimento", "follow-up"], permissions: ["context"] },
+  { id: "sales-agent-04", name: "Atendente 4", department: "COMERCIAL", responsibilities: ["atendimento", "follow-up"], permissions: ["context"] },
+  { id: "engineering-agent", name: "Engenharia", department: "DESENVOLVIMENTO", responsibilities: ["implementação", "testes"], permissions: ["context", "execute"] },
+  { id: "maintenance-agent", name: "Manutenção", department: "MANUTENÇÃO", responsibilities: ["limpeza", "saúde"], permissions: ["context"] },
 ];
 
 export interface LeadCandidate { company: string; contact: string | null; website: string | null; source: string; niche: string | null; location: string | null; signals: string[]; score: number; evidence: string[]; }

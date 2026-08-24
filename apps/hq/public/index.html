@@ -1,62 +1,65 @@
 <!doctype html>
 <html lang="pt-BR">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Second Brain HQ</title>
-  <link rel="stylesheet" href="/style.css" />
+  <link rel="stylesheet" href="/style.css"/>
 </head>
 <body>
-  <main class="shell">
-    <header class="topbar">
-      <div class="brand"><span class="brand-mark">SB</span><div><p>SECOND BRAIN</p><h1>HQ</h1></div></div>
-      <div class="top-status"><span class="pulse"></span><span id="connection">LOCAL CONTROL PLANE</span><span class="clock" id="clock"></span></div>
-    </header>
+  <header class="topbar">
+    <div class="tb-brand"><span class="logo">SB</span><span class="brand-name">SECOND BRAIN <b>HQ</b></span></div>
+    <div class="tb-status"><i id="pulse"></i><span id="conn-status">Conectando…</span></div>
+    <div class="tb-metrics" id="metrics">
+      <button class="metric" data-panel="goals"><b>—</b><small>Objetivos</small></button>
+      <button class="metric" data-panel="tasks"><b>—</b><small>Tarefas</small></button>
+      <button class="metric" data-panel="agents"><b>—</b><small>Agentes</small></button>
+      <button class="metric" data-panel="approvals"><b>—</b><small>Aprovações</small></button>
+    </div>
+    <nav class="tb-actions">
+      <button class="btn ghost" id="btn-command">💬 Comando</button>
+      <button class="btn danger" id="btn-pause">⏸ Pausar</button>
+      <button class="btn success" id="btn-resume">▶ Continuar</button>
+    </nav>
+  </header>
 
-    <section class="hero-row">
-      <div class="intro">
-        <p class="eyebrow">AGENT OFFICE / LIVE OPERATIONS</p>
-        <h2>O escritório onde<br /><em>agentes trabalham.</em></h2>
-      </div>
-      <div class="command-card">
-        <div class="card-kicker"><span>COMMAND CENTER</span><span class="key">LOCAL</span></div>
-        <label for="command">O que você quer que o escritório faça?</label>
-        <textarea id="command" placeholder='Ex.: "Precisamos faturar R$5.000 até o fim do mês." ou "pare tudo"'></textarea>
-        <div class="command-actions">
-          <button class="voice" id="voice">● <span>ÁUDIO</span></button>
-          <button class="primary" id="execute">EXECUTAR <span>↗</span></button>
-        </div>
-        <p class="command-result" id="command-result"></p>
-      </div>
-    </section>
-
-    <section class="metrics" id="metrics">
-      <div><span>ACTIVE GOALS</span><strong>—</strong></div>
-      <div><span>RUNNING AGENTS</span><strong>—</strong></div>
-      <div><span>OPEN TASKS</span><strong>—</strong></div>
-      <div><span>PENDING APPROVALS</span><strong>—</strong></div>
-    </section>
-
-    <section class="workspace">
-      <div class="section-heading"><div><p class="eyebrow">THE OFFICE FLOOR</p><h2>Escritório</h2></div><span class="updated" id="updated">Sincronizando...</span></div>
-      <div class="floor-wrap"><div class="floor" id="floor"></div></div>
-    </section>
-
-    <section class="lower-grid">
-      <div class="panel">
-        <div class="section-heading compact"><div><p class="eyebrow">TASK BOARD</p><h2>Tarefas</h2></div><span class="panel-count" id="task-count">0</span></div>
-        <div class="board" id="board"></div>
-      </div>
-      <div class="panel">
-        <div class="section-heading compact"><div><p class="eyebrow">EVENT STREAM</p><h2>Sinais ao vivo</h2></div><span class="live-label">LIVE</span></div>
-        <div id="events" class="event-list"></div>
-      </div>
-    </section>
-
-    <footer><span>SECOND BRAIN OS</span><span>Agent Office · Schema v12</span></footer>
+  <main class="office-wrap">
+    <div class="floor-scroll"><div class="floor" id="floor"></div></div>
   </main>
 
-  <aside class="profile-panel" id="profile-panel"><button class="profile-close" id="profile-close">✕</button><div id="profile-content"><p class="goal-meta">Clique em um agente no escritório.</p></div></aside>
+  <section class="bottom-grid">
+    <div class="panel">
+      <h3>📋 Tarefas</h3><span class="count" id="task-count"></span>
+      <div class="board" id="board"></div>
+    </div>
+    <div class="panel">
+      <h3>📡 Eventos</h3><span class="live-dot">AO VIVO</span>
+      <div class="event-list" id="events"></div>
+    </div>
+  </section>
+
+  <!-- Command Center Modal -->
+  <div class="overlay" id="cmd-overlay">
+    <div class="modal cmd-modal">
+      <div class="modal-head"><h2>💬 Central de Comando</h2><button class="close-btn" data-close>✕</button></div>
+      <p class="cmd-hint">Envie ordens naturais ao Orquestrador.</p>
+      <textarea id="command-input" rows="4" placeholder='Ex.: "Precisamos faturar R$5.000 até o fim do mês." ou "pare tudo"'></textarea>
+      <div class="cmd-actions">
+        <button class="btn voice" id="btn-voice">🎙️ Falar</button>
+        <button class="btn primary" id="btn-send">Enviar ➤</button>
+      </div>
+      <p class="cmd-result" id="command-result"></p>
+    </div>
+  </div>
+
+  <!-- Agent Profile Panel -->
+  <aside class="profile-panel" id="profile-panel">
+    <button class="close-btn" id="profile-close">✕</button>
+    <div id="profile-content"><p class="muted">Clique num agente no escritório.</p></div>
+  </aside>
+
+  <!-- Toast -->
+  <div class="toast" id="toast"></div>
 
   <script src="/config.js"></script>
   <script src="/app.js"></script>
