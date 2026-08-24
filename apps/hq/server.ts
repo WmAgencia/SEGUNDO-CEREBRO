@@ -12,7 +12,7 @@ import { executeEngineeringTask } from "../../core/hq/engineering.ts";
 const root = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.join(root, "public");
 const config = loadConfig();
-const port = Number(process.env.HQ_PORT ?? "3200");
+const port = Number(process.env.PORT ?? process.env.HQ_PORT ?? "3200");
 const host = process.env.HQ_HOST ?? "127.0.0.1";
 const allowedOrigins = (process.env.HQ_CORS_ORIGINS ?? "*").split(",").map((s) => s.trim());
 
