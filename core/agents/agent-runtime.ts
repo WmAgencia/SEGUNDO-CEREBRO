@@ -53,6 +53,10 @@ export interface UpsertAgentInput {
   description?: string;
   domains?: string[];
   capabilities?: string[];
+  skills?: string[];
+  tools?: string[];
+  projects?: string[];
+  goals?: string[];
   permissions?: string[];
   status?: string;
 }
@@ -65,13 +69,17 @@ export function upsertAgent(
     throw new ValidationError("agent id deve ser kebab-case");
   }
   db.prepare(
-    `INSERT INTO agents (id, name, description, domains, capabilities, permissions, status)
-     VALUES (?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO agents (id, name, description, domains, capabilities, skills, tools, projects, goals, permissions, status)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(id) DO UPDATE SET
        name = excluded.name,
        description = excluded.description,
        domains = excluded.domains,
        capabilities = excluded.capabilities,
+       skills = excluded.skills,
+       tools = excluded.tools,
+       projects = excluded.projects,
+       goals = excluded.goals,
        permissions = excluded.permissions,
        status = excluded.status`,
   ).run(
@@ -80,6 +88,10 @@ export function upsertAgent(
     input.description ?? "",
     JSON.stringify(input.domains ?? []),
     JSON.stringify(input.capabilities ?? []),
+    JSON.stringify(input.skills ?? []),
+    JSON.stringify(input.tools ?? []),
+    JSON.stringify(input.projects ?? []),
+    JSON.stringify(input.goals ?? []),
     JSON.stringify(input.permissions ?? ["context"]),
     input.status ?? "active",
   );
