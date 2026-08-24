@@ -4,6 +4,8 @@ import type { BrainConfig } from "../config/loader.ts";
 import { applySchema } from "../../storage/connection.ts";
 import { handleEvolutionWebhook } from "./evolution-webhook.ts";
 import * as evolution from "../comms/evolution-api.ts";
+import { upsertAgent } from "../agents/agent-runtime.ts";
+import { redactSecrets } from "../exec/redact.ts";
 
 const startTime = Date.now();
 
@@ -11,6 +13,8 @@ export function startServer(config: BrainConfig, port = 3001): void {
   const db = new DatabaseSync(config.dbPath);
   applySchema(db);
   ensureWebhookTables(db);
+  ensureSalesAgent(db);
+  ensureCommercialProfile(db);
   db.close();
 
   const server = createServer(async (req, res) => {
@@ -52,9 +56,12 @@ export function startServer(config: BrainConfig, port = 3001): void {
 
           // Auto-send drafts for LOW-risk autonomous replies
           for (const result of results) {
-            if (result.processed && result.action?.includes("draft_generated")) {
+            if (result.approval) {
+              await processApprovalResult(config, result.approval);
+            } else if (result.processed && result.action?.includes("draft_generated")) {
               await autoSendDraft(config, body, result);
             }
+            if (result.processed) await notifyOperations(result.action ?? "webhook_processed");
           }
         } catch {
           res.writeHead(400).end('{"error":"invalid JSON"}');
@@ -69,6 +76,66 @@ export function startServer(config: BrainConfig, port = 3001): void {
   server.listen(port, () => {
     process.stdout.write(`webhook server listening on :${port}\n`);
   });
+}
+
+function ensureSalesAgent(db: DatabaseSync): void {
+  if (db.prepare("SELECT id FROM agents WHERE id='sales-agent'").get()) return;
+  upsertAgent(db, {
+    id: "sales-agent",
+    name: "Sales & Customer Agent",
+    description: "Agente de descoberta, qualificacao e atendimento comercial.",
+    domains: ["sales", "customer-support"],
+    capabilities: ["qualification", "sales", "customer-support"],
+    skills: ["sales", "copywriting"],
+    tools: ["brain_search", "brain_context", "brain_remember"],
+    projects: [],
+    goals: [],
+    permissions: ["context", "memory.read"],
+    status: "AVAILABLE",
+  });
+}
+
+function ensureCommercialProfile(db: DatabaseSync): void {
+  db.prepare(
+    `INSERT INTO comm_profiles (owner, context, tone, formality, message_length)
+     VALUES ('sales-agent', 'COMMERCIAL', 'consultivo', 'profissional', 'curta')
+     ON CONFLICT(owner, context) DO NOTHING`,
+  ).run();
+}
+
+async function processApprovalResult(
+  config: BrainConfig,
+  approval: { id: number; decision: "APPROVED" | "REJECTED"; customer: string; draft: string },
+): Promise<void> {
+  if (approval.decision !== "APPROVED" || !approval.customer || !approval.draft) return;
+  try {
+    const sent = await evolution.sendMessage(approval.customer, approval.draft);
+    const db = new DatabaseSync(config.dbPath);
+    try {
+      const row = db
+        .prepare("SELECT id FROM wa_conversations WHERE contact_id=(SELECT id FROM wa_contacts WHERE external_id=?) ORDER BY id DESC LIMIT 1")
+        .get(approval.customer) as { id: number } | undefined;
+      if (row) {
+        db.prepare(
+          "INSERT INTO wa_messages (conversation_id, external_id, direction, content, timestamp) VALUES (?, ?, 'outbound', ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))",
+        ).run(row.id, sent.messageId, approval.draft);
+      }
+      db.prepare(
+        "INSERT INTO events (event_type, subject, payload) VALUES ('message_sent', ?, ?)",
+      ).run(approval.customer, JSON.stringify({ approvalId: approval.id, messageId: sent.messageId }));
+    } finally {
+      db.close();
+    }
+  } catch (err) {
+    const db = new DatabaseSync(config.dbPath);
+    try {
+      db.prepare(
+        "INSERT INTO events (event_type, subject, payload) VALUES ('message_failed', ?, ?)",
+      ).run(approval.customer, JSON.stringify({ approvalId: approval.id, error: err instanceof Error ? err.message : String(err) }));
+    } finally {
+      db.close();
+    }
+  }
 }
 
 async function autoSendDraft(
@@ -103,8 +170,48 @@ async function autoSendDraft(
 
     const draft = extractDraftFromDb(config, externalIdOf(key));
     if (!draft) return;
-    await evolution.sendMessage(result.recipient ?? phone, draft);
+    const sent = await evolution.sendMessage(result.recipient ?? phone, draft);
+    recordOutbound(config, result.recipient ?? phone, externalIdOf(key), sent.messageId, draft);
   } catch {}
+}
+
+function recordOutbound(
+  config: BrainConfig,
+  recipient: string,
+  inboundExternalId: string,
+  messageId: string,
+  content: string,
+): void {
+  try {
+    const db = new DatabaseSync(config.dbPath);
+    try {
+      const row = db
+        .prepare("SELECT conversation_id FROM wa_messages WHERE external_id=?")
+        .get(inboundExternalId) as { conversation_id: number } | undefined;
+      if (!row) return;
+      db.prepare(
+        `INSERT OR IGNORE INTO wa_messages
+         (conversation_id, external_id, direction, content, timestamp)
+         VALUES (?, ?, 'outbound', ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))`,
+      ).run(row.conversation_id, messageId, content);
+      db.prepare(
+        "INSERT INTO events (event_type, subject, payload) VALUES ('message_sent', ?, ?)",
+      ).run(recipient, JSON.stringify({ messageId, inboundExternalId }));
+    } finally {
+      db.close();
+    }
+  } catch (err) {
+    process.stderr.write(`webhook: outbound audit failed: ${redactSecrets(String(err))}\n`);
+  }
+}
+
+async function notifyOperations(summary: string): Promise<void> {
+  const group = process.env.SECOND_BRAIN_OPERATIONS_GROUP ?? "120363427273069174@g.us";
+  try {
+    await evolution.sendMessage(group, `SECOND BRAIN\nEVENTO: ${redactSecrets(summary).slice(0, 220)}`);
+  } catch {
+    // Operational reporting must never block customer processing.
+  }
 }
 
 function externalIdOf(key: Record<string, unknown>): string {

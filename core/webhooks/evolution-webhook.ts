@@ -1,7 +1,18 @@
 import { createServer, IncomingMessage, ServerResponse } from "node:http";
 import { DatabaseSync } from "node:sqlite";
 import type { BrainConfig } from "../config/loader.ts";
-import { ensureCommTables, resolveContact, resolveConversation, saveMessage, isDuplicateMessage, classifyIntent } from "../comms/pipeline.ts";
+import {
+  ensureCommTables,
+  resolveContact,
+  resolveConversation,
+  saveMessage,
+  isDuplicateMessage,
+  classifyIntent,
+  getCustomerProfile,
+  nextBestAction,
+  stageForIntent,
+  updateCustomerProfile,
+} from "../comms/pipeline.ts";
 import * as evolution from "../comms/evolution-api.ts";
 import { buildContextPackage } from "../context/context-package.ts";
 
@@ -14,7 +25,14 @@ export interface WebhookEvent {
 export function handleEvolutionWebhook(
   config: BrainConfig,
   body: WebhookEvent,
-): { processed: boolean; action?: string; error?: string; intent?: string; recipient?: string } {
+): {
+  processed: boolean;
+  action?: string;
+  error?: string;
+  intent?: string;
+  recipient?: string;
+  approval?: { id: number; decision: "APPROVED" | "REJECTED"; customer: string; draft: string };
+} {
   if (!body.event || !body.instance) {
     return { processed: false, error: "missing event or instance" };
   }
@@ -53,7 +71,14 @@ function processIncomingMessage(
   db: DatabaseSync,
   config: BrainConfig,
   data?: Record<string, unknown>,
-): { processed: boolean; action?: string; error?: string; intent?: string; recipient?: string } {
+): {
+  processed: boolean;
+  action?: string;
+  error?: string;
+  intent?: string;
+  recipient?: string;
+  approval?: { id: number; decision: "APPROVED" | "REJECTED"; customer: string; draft: string };
+} {
   const key = (data?.key as Record<string, unknown>) ?? {};
   const externalId = String(key.id ?? "");
   const fromMe = Boolean(key.fromMe);
@@ -75,17 +100,98 @@ function processIncomingMessage(
   const remoteJid = String(key.remoteJid ?? "");
   const phone = remoteJid.split("@")[0] ?? remoteJid;
   const pushName = String(data?.pushName ?? phone);
+  const content = msgContent.trim();
+
+  const ownerPhone = (process.env.OWNER_WHATSAPP ?? "5515981817336").replace(/\D/g, "");
+  if (phone.replace(/\D/g, "") === ownerPhone) {
+    const decision = approvalDecision(content);
+    if (decision) {
+      const pending = db
+        .prepare(
+          "SELECT id, payload FROM approvals WHERE status='PENDING' AND type='CUSTOMER_MESSAGE' ORDER BY created_at DESC LIMIT 1",
+        )
+        .get() as { id: number; payload: string } | undefined;
+      if (!pending) {
+        return { processed: true, action: "approval_command_without_pending_approval" };
+      }
+      const approvalData = safeObject(pending.payload);
+      const customer = String(approvalData.customerPhone ?? "");
+      const draft = String(approvalData.proposedResponse ?? "");
+      db.prepare(
+        `UPDATE approvals SET status=?, resolved_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'),
+         resolved_by=?, decision=? WHERE id=? AND status='PENDING'`,
+      ).run(decision, ownerPhone, decision, pending.id);
+      logEvent(db, decision === "APPROVED" ? "approval_approved" : "approval_rejected", ownerPhone, {
+        approvalId: pending.id,
+      });
+      return {
+        processed: true,
+        action: `approval_${decision.toLowerCase()}`,
+        approval: { id: pending.id, decision, customer, draft },
+      };
+    }
+  }
 
   const contact = resolveContact(db, phone, pushName);
   const conversation = resolveConversation(db, contact.id);
   saveMessage(db, conversation.id, externalId, "inbound", msgContent);
 
   const intent = classifyIntent(msgContent);
+  const profile = getCustomerProfile(db, contact.id);
+  const next = nextBestAction(intent, profile);
+  const contextPackage = buildContextPackage(config, {
+    task: `Responder cliente: ${intent}`,
+    entity: "project.vyntra",
+    depth: 1,
+    maxChars: 4000,
+  });
+  updateCustomerProfile(db, contact.id, {
+    sales_stage: stageForIntent(intent),
+    next_action: next.action,
+    service_interest:
+      profile.service_interest === "UNKNOWN" && intent === "SERVICE"
+        ? "website_or_system"
+        : profile.service_interest,
+    objections:
+      intent === "OBJECTION" || intent === "NEGOTIATION"
+        ? [...new Set([...profile.objections, content])]
+        : profile.objections,
+  });
+  db.prepare(
+    "UPDATE wa_conversations SET status='ACTIVE', sales_stage=?, last_intent=?, next_action=? WHERE id=?",
+  ).run(stageForIntent(intent), intent, next.action, conversation.id);
   const draft = generateDraft(intent, msgContent);
+
+  if (next.action === "REQUEST_HUMAN") {
+    const approval = db
+      .prepare(
+        `INSERT INTO approvals (initiative_id, agent_id, type, payload, reason)
+         VALUES (?, 'sales-agent', 'CUSTOMER_MESSAGE', ?, ?)`,
+      )
+      .run(
+        "project.vyntra",
+        JSON.stringify({
+          customerPhone: phone,
+          customerMessage: content,
+          proposedResponse: draft,
+          risk: "HIGH",
+          expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+        }),
+        next.reason,
+      );
+    logEvent(db, "approval_required", phone, { approvalId: Number(approval.lastInsertRowid) });
+  }
 
   saveMessage(db, conversation.id, `draft_${externalId}`, "outbound", draft);
   logEvent(db, "message_received", contact.id.toString(), {
-    intent, conversationId: conversation.id,
+    intent,
+    action: next.action,
+    confidence: next.confidence,
+    conversationId: conversation.id,
+  });
+  logEvent(db, "context_built", contact.id.toString(), {
+    entityId: contextPackage.context.entityId,
+    memoryCount: contextPackage.memories.length,
   });
   logEvent(db, "draft_created", null, { taskId: conversation.id });
 
@@ -95,6 +201,23 @@ function processIncomingMessage(
     intent,
     recipient: phone,
   };
+}
+
+function approvalDecision(text: string): "APPROVED" | "REJECTED" | null {
+  if (/^(aprovar|aprovado|aceitar|aceito|sim)$/i.test(text)) return "APPROVED";
+  if (/^(rejeitar|rejeitado|recusar|recusado|não|nao)$/i.test(text)) return "REJECTED";
+  return null;
+}
+
+function safeObject(raw: string): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
+  }
 }
 
 function generateDraft(intent: string, _customerMsg: string): string {
