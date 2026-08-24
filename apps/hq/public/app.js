@@ -2,7 +2,7 @@ const $=id=>document.getElementById(id);
 const API=(window.HQ_API_URL??'').replace(/\/$/,'');
 const state={data:null,agentsById:{},cam:{x:0,y:0,zoom:1},dragging:false,lastX:0,lastY:0};
 const CELL=40;
-const PT={AVAILABLE:'Disponível',ACTIVE:'Ativo',IDLE:'Parado',WORKING:'Trabalhando',RUNNING:'Executando',PLANNING:'Planejando',PAUSED:'Pausado',WAITING:'Em espera',BLOCKED:'Bloqueado',FAILED:'Com erro',COMPLETED:'Concluído',HANDOFF:'Transferindo'};
+const PT={AVAILABLE:'Disponível',ACTIVE:'Ativo',IDLE:'Ocioso',WORKING:'Trabalhando',RUNNING:'Executando',PLANNING:'Planejando',PAUSED:'Em pausa',WAITING:'Aguardando',BLOCKED:'Bloqueado',FAILED:'Com erro',COMPLETED:'Concluído',HANDOFF:'Transferindo',AWAITING_APPROVAL:'Aguardando aprovação',OFFLINE:'Offline'};
 function stPt(s){return PT[String(s||'').toUpperCase()]??String(s||'').toLowerCase()}
 function stCls(s){const k=String(s||'').toUpperCase();if(['WORKING','RUNNING','PLANNING'].includes(k))return'st-working';if(['BLOCKED','FAILED'].includes(k))return'st-blocked';if(['AVAILABLE','ACTIVE'].includes(k))return'st-available';if(k==='COMPLETED')return'st-completed';if(['PAUSED','WAITING','HANDOFF'].includes(k))return'st-paused';return'st-idle'}
 function esc(v){return String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]))}
@@ -102,6 +102,25 @@ async function openProfile(aid){
 }
 $('profile-close').addEventListener('click',()=>$('profile-panel').classList.remove('open'));
 
+/* ── MODES ── */
+let currentMode='plane';
+document.querySelectorAll('.mode-btn').forEach(btn=>btn.addEventListener('click',()=>{
+  const mode=btn.dataset.mode;
+  document.querySelectorAll('.mode-btn').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  currentMode=mode;$('mode-badge').textContent=mode.charAt(0).toUpperCase()+mode.slice(1);
+  // Send mode switch to backend
+  fetch(`${API}/api/hq/command`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:mode})}).then(r=>r.json()).then(r=>{addMsg(r.message,'mgr')}).catch(()=>{});
+}));
+$('command-input').addEventListener('keydown',e=>{
+  if(e.key==='Tab'){e.preventDefault();
+    const modes=['plane','brain','build'];const idx=modes.indexOf(currentMode);
+    const next=modes[(idx+1)%modes.length];
+    document.querySelector(`[data-mode="${next}"]`)?.click();
+    return}
+  if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();$('btn-send').click()}
+});
+
 /* ── SIDEBAR ── */
 $('btn-command').addEventListener('click',()=>{$('cmd-sidebar').classList.toggle('open');if($('cmd-sidebar').classList.contains('open'))$('command-input').focus()});
 $('cmd-close').addEventListener('click',()=>$('cmd-sidebar').classList.remove('open'));
@@ -112,7 +131,11 @@ function addMsg(text,who){const b=$('chat-body');const d=document.createElement(
 $('btn-send').addEventListener('click',async()=>{
   const text=$('command-input').value;if(!text.trim())return;
   addMsg(text,'user');$('command-input').value='';$('command-result').textContent='';
-  try{const r=await(await fetch(`${API}/api/hq/command`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})})).json();addMsg(r.message,'mgr');if(r.ok){toast('✓ Executado');await refresh()}}catch{addMsg('Backend indisponível.','mgr')}
+  try{const r=await(await fetch(`${API}/api/hq/command`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})})).json();
+    addMsg(r.message,'mgr');
+    if(r.contextCards){r.contextCards.forEach(c=>addMsg(`${c.label}: ${c.value}`,'mgr'))}
+    if(r.ok&&!r.requiresConfirmation){toast('✓');await refresh()}
+  }catch{addMsg('Backend indisponível.','mgr')}
 });
 $('command-input').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();$('btn-send').click()}});
 $('btn-pause').addEventListener('click',async()=>{try{addMsg('pare tudo','user');const r=await(await fetch(`${API}/api/hq/command`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:'pare tudo'})})).json();addMsg(r.message,'mgr');await refresh()}catch{toast('Erro.')}});

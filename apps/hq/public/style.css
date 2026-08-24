@@ -131,6 +131,9 @@ textarea:focus{border-color:var(--accent)}
 .p-item small{display:block;font:7px var(--mono);color:var(--muted);margin-top:2px}
 .close-btn{font-size:13px;color:var(--muted);padding:3px 7px;position:absolute;top:12px;right:12px}
 .muted{font:10px var(--mono);color:var(--muted)}
+.mode-btn.active{border-color:var(--accent)!important;color:var(--accent)!important;background:rgba(84,184,146,.08)}
+.mode-badge{font:500 8px var(--mono);color:var(--accent);border:1px solid var(--accent);border-radius:4px;padding:1px 6px;margin-left:6px;vertical-align:middle}
+
 .toast{position:fixed;bottom:200px;right:16px;background:var(--card);border:1px solid var(--border);border-radius:7px;padding:8px 14px;font:10px var(--sans);z-index:300;opacity:0;transition:opacity .3s;pointer-events:none}
 .toast.show{opacity:1}
 

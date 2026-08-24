@@ -15,6 +15,9 @@
     <button class="metric"><b>—</b><small>Aprovações</small></button>
   </div>
   <nav class="tb-actions">
+    <button class="btn ghost mode-btn active" data-mode="plane" id="mode-plane">Plane</button>
+    <button class="btn ghost mode-btn" data-mode="brain" id="mode-brain">Brain</button>
+    <button class="btn ghost mode-btn" data-mode="build" id="mode-build">Build</button>
     <button class="btn ghost" id="btn-command">💬 Comando</button>
     <button class="btn danger" id="btn-pause">⏸ Parar</button>
     <button class="btn success" id="btn-resume">▶ Continuar</button>
@@ -43,7 +46,7 @@
 
 <!-- Command Center Sidebar -->
 <aside class="sidebar" id="cmd-sidebar">
-  <div class="sidebar-head"><h3>💬 Gerente</h3><button class="close-btn" id="cmd-close">✕</button></div>
+  <div class="sidebar-head"><h3>💬 Gerente <span class="mode-badge" id="mode-badge">Plane</span></h3><button class="close-btn" id="cmd-close">✕</button></div>
   <div class="sidebar-body" id="chat-body"><div class="msg mgr"><small>Gerente</small>Olá! Como posso ajudar o escritório hoje?</div></div>
   <div class="sidebar-input-area">
     <textarea id="command-input" rows="2" placeholder='Digite uma ordem… (Enter envia)'></textarea>

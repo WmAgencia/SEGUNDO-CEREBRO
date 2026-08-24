@@ -51,7 +51,7 @@ export function getHqSnapshot(config: BrainConfig): HqSnapshot {
 function ensureHqAgents(db: DatabaseSync): void {
   for (const definition of SPECIALIZED_AGENTS) {
     if (db.prepare("SELECT id FROM agents WHERE id=?").get(definition.id)) continue;
-    upsertAgent(db, { id: definition.id, name: definition.name, description: `${definition.department} do Second Brain HQ.`, domains: [definition.id === "manager" ? "management" : definition.department.toLowerCase()], capabilities: definition.responsibilities, permissions: definition.permissions, status: definition.id === "manager" ? "AVAILABLE" : "PAUSED" });
+    upsertAgent(db, { id: definition.id, name: definition.name, description: `${definition.department} do Second Brain HQ.`, domains: [definition.id === "manager" ? "management" : definition.department.toLowerCase()], capabilities: definition.responsibilities, permissions: definition.permissions, status: "AVAILABLE" });
   }
 }
 

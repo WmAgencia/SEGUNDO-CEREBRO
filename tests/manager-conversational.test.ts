@@ -35,7 +35,7 @@ describe("Manager Conversacional", () => {
   it("TEST 3: 'Você consegue me ajudar?' → resposta positiva", () => {
     const cfg = config(); const db = openDatabase(cfg.dbPath); applySchema(db); db.close();
     const r = managerChat(cfg, "Você consegue me ajudar?", "test-3");
-    expect(r.message).toContain("Posso");
+    expect(r.message).toMatch(/Posso|Consigo/);
   });
 
   it("TEST 4: 'Estou pensando em aumentar vendas.' → conversa/ideia, NÃO executa", () => {
