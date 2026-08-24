@@ -41,6 +41,11 @@ Data: 2026-08-24
 - Tool error rate: provider OpenCode teve falhas anteriores; execução gratuita posterior passou.
 - Wrong agent/tool: `0` observado nas tasks executadas.
 - Context retrieval score: `PASS` para provenance PERSONAL; conteúdo íntimo não exposto.
+- Ana archive: `22.413` mensagens válidas; a importação incremental armazenou
+  `6.766` novas no total (parte antes do timeout e retomada idempotente); uma
+  execução posterior armazenou `0`.
+- Ana style: informal, afetivo/natural, mensagens curtas, abreviações frequentes,
+  emojis ocasionais e ritmo conversacional.
 - Personal communication score: `PENDING`.
 
 ## External Status

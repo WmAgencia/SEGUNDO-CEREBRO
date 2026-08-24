@@ -20,6 +20,7 @@ import { LocalLlamaCppProvider } from "../../../core/ai/llamacpp-provider.ts";
 import { extractMemoryProposals } from "../../../core/ai/memory-extractor.ts";
 import { saveConfirmedMemory } from "../../../core/ai/save-memory.ts";
 import { compilePersonalContext, isAna } from "../../../core/personal/personal-agent.ts";
+import { ingestWhatsAppArchive } from "../../../core/ingest/whatsapp-ingest.ts";
 import { getProjectIntelligence } from "../../../core/projects/project-intelligence.ts";
 import {
   listCandidates,
@@ -912,17 +913,38 @@ program
     try {
       const context = compilePersonalContext(db, phone);
       if (!context) throw new BrainError("NOT_FOUND", "personal contact not found");
+      const personalRows = db.prepare("SELECT COUNT(*) AS n FROM memories WHERE category='PERSONAL' AND source_id='src.ana' AND project IS NULL").get() as { n: number };
       process.stdout.write(JSON.stringify({
         personId: context.personId,
         conversationId: context.conversationId,
         hasLastMessage: Boolean(context.lastMessage),
         topicCount: context.currentTopics.length,
         knownFacts: context.knownFacts.length,
+        personalMemoryCount: Number(personalRows.n),
         sources: context.sources,
         privacyScope: "PERSONAL/RELATIONSHIP",
         commercialContextIncluded: false,
+        communicationStyle: context.communicationStyle,
         confidence: context.confidence,
       }, null, 2) + "\n");
+    } finally { db.close(); }
+  });
+
+program
+  .command("ingest-personal-archive <archive>")
+  .description("ingere export WhatsApp de Ana com deduplicação e escopo PERSONAL")
+  .action((archive: string) => {
+    const config = loadConfigOrExit();
+    const db = openDatabase(config.dbPath);
+    try {
+      process.stdout.write(JSON.stringify(ingestWhatsAppArchive(db, {
+        archivePath: archive,
+        sourceId: "ana",
+        contextScope: "PERSONAL",
+        contactPhone: "15981142057",
+        contactName: "Ana",
+        confidenceBase: 0.9,
+      }), null, 2) + "\n");
     } finally { db.close(); }
   });
 

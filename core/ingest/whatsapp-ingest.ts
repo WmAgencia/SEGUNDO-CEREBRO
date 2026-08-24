@@ -1,5 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { readFileSync, existsSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 
 export interface SourceConfig {
   sourceId: string;
@@ -21,7 +23,10 @@ const MSG_RE = /^(\d{2}\/\d{2}\/\d{4})\s+(\d{2}:\d{2})(?:\s*-\s*)(.*?)(?::\s)(.*
 
 export function parseWhatsAppExport(filePath: string): ParsedMessage[] {
   if (!existsSync(filePath)) throw new Error(`file not found: ${filePath}`);
-  const raw = readFileSync(filePath, "latin1");
+  return parseWhatsAppExportText(readFileSync(filePath, "utf8"));
+}
+
+export function parseWhatsAppExportText(raw: string): ParsedMessage[] {
   const lines = raw.split(/\r?\n/);
   const messages: ParsedMessage[] = [];
 
@@ -90,7 +95,7 @@ export function ingestSource(
       knownPhones.add(speakerKey);
       db.prepare(
         `INSERT INTO wa_contacts (external_id, name, metadata) VALUES (?, ?, ?)
-         ON CONFLICT(external_id) DO NOTHING`,
+          ON CONFLICT(external_id) DO UPDATE SET name=excluded.name, metadata=excluded.metadata`,
       ).run(
         speakerKey === "owner" ? "5515981732994" : cfg.contactPhone ?? speakerKey,
         isOwner ? "Wesley (Consecom)" : cfg.contactName ?? msg.speaker,
@@ -103,19 +108,23 @@ export function ingestSource(
     const confidence = Math.min(1, cfg.confidenceBase + (msg.content.length > 50 ? 0.05 : 0));
 
     try {
+      const fingerprint = createHash("sha256").update(`${msg.timestamp}\n${msg.speaker}\n${msg.content}`).digest("hex");
+      const exists = db.prepare("SELECT id FROM memories WHERE source_id=? AND (metadata LIKE ? OR (created_at=? AND content=?)) LIMIT 1").get(`src.${cfg.sourceId}`, `%${fingerprint}%`, msg.timestamp, redactContent(msg.content));
+      if (exists) { skipped++; continue; }
       db.prepare(
         `INSERT INTO memories (memory_kind, category, content, entity_id, project,
-           confidence, importance, source_id, created_at)
-         VALUES ('episodic', ?, ?, ?, ?, ?, ?, ?, ?)`,
+           confidence, importance, source_id, created_at, metadata)
+         VALUES ('episodic', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         cfg.contextScope.toUpperCase(),
         redactContent(msg.content),
         null,
-        "consecom",
+        cfg.contextScope.toUpperCase() === "PERSONAL" ? null : "consecom",
         confidence,
         Math.min(0.9, confidence * 0.8),
         `src.${cfg.sourceId}`,
         msg.timestamp,
+        JSON.stringify({ fingerprint, speaker: msg.speaker, privacyScope: cfg.contextScope.toUpperCase() }),
       );
       stored++;
 
@@ -137,6 +146,41 @@ export function ingestSource(
     skipped,
     contactsCreated: knownContacts(db, cfg.sourceId),
   };
+}
+
+export function ingestWhatsAppArchive(db: DatabaseSync, cfg: Omit<SourceConfig, "filePath"> & { archivePath: string }): IngestResult {
+  if (!existsSync(cfg.archivePath)) throw new Error(`file not found: ${cfg.archivePath}`);
+  const entries = execFileSync("tar", ["-tf", cfg.archivePath], { encoding: "utf8" }).split(/\r?\n/).filter((entry) => entry.toLowerCase().endsWith(".txt"));
+  const entry = entries.find((candidate) => /conversa.*ana/i.test(candidate)) ?? entries[0];
+  if (!entry) throw new Error("WhatsApp text export not found in archive");
+  const raw = execFileSync("tar", ["-xOf", cfg.archivePath, entry], { encoding: "utf8", maxBuffer: 20 * 1024 * 1024 });
+  const tempPath = cfg.archivePath;
+  db.prepare("INSERT INTO sources (id, source_type, location, metadata) VALUES (?, 'whatsapp_export', ?, ?) ON CONFLICT(id) DO UPDATE SET location=excluded.location, metadata=excluded.metadata")
+    .run(`src.${cfg.sourceId}`, tempPath, JSON.stringify({ entry, contextScope: cfg.contextScope, privacy: "PERSONAL/RELATIONSHIP" }));
+  const messages = parseWhatsAppExportText(raw);
+  let stored = 0; let skipped = 0;
+  const existing = db.prepare("SELECT created_at, content, metadata FROM memories WHERE source_id=?").all(`src.${cfg.sourceId}`) as unknown as Array<{ created_at: string; content: string; metadata: string }>;
+  const fingerprints = new Set<string>();
+  const legacyKeys = new Set<string>();
+  for (const row of existing) {
+    const match = row.metadata.match(/"fingerprint"\s*:\s*"([a-f0-9]+)"/i);
+    if (match?.[1]) fingerprints.add(match[1]);
+    legacyKeys.add(`${row.created_at}\n${row.content}`);
+  }
+  for (const msg of messages) {
+    const fingerprint = createHash("sha256").update(`${msg.timestamp}\n${msg.speaker}\n${msg.content}`).digest("hex");
+    const content = redactContent(msg.content);
+    if (fingerprints.has(fingerprint) || legacyKeys.has(`${msg.timestamp}\n${content}`)) { skipped++; continue; }
+    db.prepare(`INSERT INTO memories (memory_kind,category,content,project,confidence,importance,source_id,created_at,metadata) VALUES ('episodic',?,?,?,?,?,?,?,?)`)
+      .run(cfg.contextScope.toUpperCase(), content, null, cfg.confidenceBase, Math.min(0.9, cfg.confidenceBase * 0.8), `src.${cfg.sourceId}`, msg.timestamp, JSON.stringify({ fingerprint, speaker: msg.speaker, privacyScope: "PERSONAL/RELATIONSHIP" }));
+    const id = Number((db.prepare("SELECT last_insert_rowid() AS id").get() as { id: number }).id);
+    db.prepare("INSERT INTO memories_fts (memory_id,content,category) VALUES (?,?,?)").run(id, msg.content.slice(0, 500), cfg.contextScope.toUpperCase());
+    fingerprints.add(fingerprint); legacyKeys.add(`${msg.timestamp}\n${content}`);
+    stored++;
+  }
+  db.prepare("INSERT INTO wa_contacts (external_id,name,metadata) VALUES (?,?,?) ON CONFLICT(external_id) DO UPDATE SET name=excluded.name,metadata=excluded.metadata")
+    .run(cfg.contactPhone ?? cfg.sourceId, cfg.contactName ?? "Ana", JSON.stringify({ sourceId: cfg.sourceId, contextScope: "PERSONAL", relationship: "RELATIONSHIP" }));
+  return { sourceId: cfg.sourceId, totalMessages: messages.length, stored, skipped, contactsCreated: 1 };
 }
 
 function knownContacts(db: DatabaseSync, sourceId: string): number {
