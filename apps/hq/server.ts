@@ -13,8 +13,31 @@ const root = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.join(root, "public");
 const config = loadConfig();
 const port = Number(process.env.HQ_PORT ?? "3200");
+const host = process.env.HQ_HOST ?? "127.0.0.1";
+const allowedOrigins = (process.env.HQ_CORS_ORIGINS ?? "*").split(",").map((s) => s.trim());
+
+function cors(req: import("node:http").IncomingMessage, res: import("node:http").ServerResponse): void {
+  const origin = req.headers.origin ?? "";
+  if (allowedOrigins.includes("*") || allowedOrigins.includes(origin)) res.setHeader("Access-Control-Allow-Origin", origin || "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  res.setHeader("Access-Control-Max-Age", "86400");
+}
+
+function checkHealth(): Record<string, unknown> {
+  const db = new DatabaseSync(config.dbPath);
+  try {
+    const tables = Number((db.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE type='table'").get() as { n: number }).n);
+    const agents = Number((db.prepare("SELECT COUNT(*) AS n FROM agents").get() as { n: number }).n);
+    return { status: "healthy", services: { database: tables > 10, agentRegistry: agents > 0, secondBrain: true, hq: true }, checkedAt: new Date().toISOString() };
+  } finally { db.close(); }
+}
+
 const server = createServer((req, res) => {
-  const url = new URL(req.url ?? "/", `http://127.0.0.1:${port}`);
+  cors(req, res);
+  if (req.method === "OPTIONS") { res.writeHead(204); res.end(); return; }
+  const url = new URL(req.url ?? "/", `http://${host}:${port}`);
+  if (req.method === "GET" && (url.pathname === "/health" || url.pathname === "/api/hq/health")) { res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify(checkHealth())); return; }
   if (req.method === "GET" && url.pathname === "/api/hq/state") { res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify(getHqSnapshot(config))); return; }
   if (req.method === "GET" && url.pathname === "/api/hq/events") {
     res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" });
@@ -50,4 +73,4 @@ const server = createServer((req, res) => {
   const type = file.endsWith(".css") ? "text/css" : file.endsWith(".js") ? "text/javascript" : "text/html";
   res.writeHead(200, { "Content-Type": type }); res.end(readFileSync(file));
 });
-server.listen(port, "127.0.0.1", () => process.stdout.write(`Second Brain HQ on http://127.0.0.1:${port}\n`));
+server.listen(port, host, () => process.stdout.write(`Second Brain HQ on http://${host}:${port}\n`));

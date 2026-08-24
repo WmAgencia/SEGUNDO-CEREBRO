@@ -1,6 +1,7 @@
 const $ = (id) => document.getElementById(id);
 const state = { data: null, agentsById: {} };
 const CELL = 40;
+const API = (window.HQ_API_URL ?? '').replace(/\/$/, '');
 
 function esc(v) { return String(v ?? '').replace(/[&<>'"]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c])); }
 
@@ -72,7 +73,7 @@ function render(data) {
 
 async function refresh() {
   try {
-    const r = await fetch('/api/hq/state'); if (!r.ok) throw new Error();
+    const r = await fetch(`${API}/api/hq/state`); if (!r.ok) throw new Error();
     render(await r.json());
     $('connection').textContent = 'LIVE'; document.querySelector('.pulse').style.background = 'var(--teal)';
   } catch { $('connection').textContent = 'OFFLINE'; document.querySelector('.pulse').style.background = 'var(--red)'; }
@@ -81,7 +82,7 @@ async function refresh() {
 async function openProfile(agentId) {
   $('profile-panel').classList.add('open'); $('profile-content').innerHTML = '<p class="goal-meta">Carregando...</p>';
   try {
-    const p = await (await fetch(`/api/hq/agent/${encodeURIComponent(agentId)}`)).json();
+    const p = await (await fetch(`${API}/api/hq/agent/${encodeURIComponent(agentId)}`)).json();
     const a = p.agent ?? {}; let domains = [];
     try { domains = JSON.parse(a.domains ?? '[]'); } catch {}
     $('profile-content').innerHTML = `
@@ -98,7 +99,7 @@ $('execute').addEventListener('click', async () => {
   const text = $('command').value; if (!text.trim()) return;
   $('command-result').textContent = 'Manager processando...';
   try {
-    const result = await (await fetch('/api/hq/command', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({text}) })).json();
+    const result = await (await fetch(`${API}/api/hq/command`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({text}) })).json();
     $('command-result').textContent = result.message;
     if (result.ok) { $('command').value = ''; await refresh(); }
   } catch { $('command-result').textContent = 'Control plane indisponível.'; }
@@ -115,7 +116,7 @@ $('voice').addEventListener('click', async () => {
     recorder.onstop=async()=>{ stream.getTracks().forEach((t)=>t.stop()); $('voice').querySelector('span').textContent='ÁUDIO';
       const blob=new Blob(chunks,{type:recorder.mimeType||'audio/webm'}); const bytes=new Uint8Array(await blob.arrayBuffer());
       let bin=''; bytes.forEach((b)=>bin+=String.fromCharCode(b));
-      const result=await(await fetch('/api/hq/transcribe',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({audio:btoa(bin),mimeType:blob.type,durationMs:Date.now()-recordingStarted})})).json();
+      const result=await(await fetch(`${API}/api/hq/transcribe`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({audio:btoa(bin),mimeType:blob.type,durationMs:Date.now()-recordingStarted})})).json();
       if(result.status!=='TRANSCRIBED'){$('command-result').textContent=result.status;return}
       $('command').value=result.text; $('command-result').textContent='Transcrição recebida. Revise e execute.'};
     recorder.start(); $('voice').querySelector('span').textContent='PARAR'; $('command-result').textContent='Gravando...';
@@ -123,7 +124,7 @@ $('voice').addEventListener('click', async () => {
 });
 
 if (window.EventSource) {
-  const es = new EventSource('/api/hq/events');
+  const es = new EventSource(`${API}/api/hq/events`);
   es.onmessage = (msg) => { try { const ev = JSON.parse(msg.data); if (ev.type==='AGENT_MOVE'||ev.type==='HANDOFF_CREATED') animateMovement(ev.payload||{}); } catch {} refresh(); };
   es.onerror = () => { $('connection').textContent='RECONNECTING'; };
 }
