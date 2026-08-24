@@ -20,7 +20,8 @@
     "mcp": "node mcp/src/main.ts",
     "mcp:smoke": "node scripts/mcp-smoke.cjs",
     "llama:serve": "scripts\\llama-serve.cmd",
-    "ai:status": "node apps/cli/src/main.ts ai:status"
+    "ai:status": "node apps/cli/src/main.ts ai:status",
+    "hq": "node --experimental-strip-types apps/hq/server.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",

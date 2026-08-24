@@ -157,3 +157,20 @@ O benchmark OpenCode real fica bloqueado quando
 `node_modules/.bin/opencode` não existe; não há fallback fake. A conversa com
 Ana só é ativada após mensagem inbound real e contexto suficiente. A API
 Evolution foi verificada como `SECOM=open`, mas nenhuma mensagem foi enviada.
+
+## 9. Second Brain HQ
+
+O HQ é uma camada de apresentação local em `apps/hq`, servida em
+`127.0.0.1:3200`. `core/hq/hq-api.ts` lê as tabelas operacionais existentes e
+usa `createGoal` para comandos do Command Center; goals criados pela interface
+também recebem uma nota consolidada em `08 - Goals/`. Não existe banco, task,
+memória ou runtime paralelo.
+
+O escritório mantém dez departamentos fixos, com `UNASSIGNED` quando não há
+agente real registrado. O Manager é registrado como agente orchestrator na
+primeira leitura do snapshot. A interface exibe somente o estado retornado pelo
+backend; animações físicas são CSS de apresentação e não afirmam movimentos ou
+handoffs que não estejam persistidos.
+
+Áudio/transcrição e realtime por event stream ainda estão `NOT IMPLEMENTED`;
+o frontend informa isso explicitamente e usa refresh moderado do snapshot.

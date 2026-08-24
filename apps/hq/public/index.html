@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Second Brain HQ</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div class="brand"><span class="brand-mark">SB</span><div><p>SECOND BRAIN</p><h1>HQ</h1></div></div>
+      <div class="top-status"><span class="pulse"></span><span id="connection">LOCAL CONTROL PLANE</span><span class="clock" id="clock"></span></div>
+    </header>
+    <section class="hero-grid">
+      <div class="intro"><p class="eyebrow">OPERATIONS FLOOR / LIVE VIEW</p><h2>Onde o conhecimento<br /><em>vira movimento.</em></h2><p class="lede">Um escritório vivo para comandar objetivos, acompanhar agentes e transformar contexto em execução.</p></div>
+      <div class="command-card"><div class="card-kicker"><span>COMMAND CENTER</span><span class="key">LOCAL</span></div><label for="command">O que você quer que o escritório faça?</label><textarea id="command" placeholder="Ex.: Quero criar um objetivo de desenvolvimento do Nutriva."></textarea><div class="command-actions"><button class="voice" id="voice" title="Transcrição de áudio ainda não implementada">● <span>ÁUDIO</span></button><button class="primary" id="execute">EXECUTAR <span>↗</span></button></div><p class="command-result" id="command-result"></p></div>
+    </section>
+    <section class="metrics" id="metrics"><div><span>ACTIVE GOALS</span><strong>—</strong></div><div><span>RUNNING AGENTS</span><strong>—</strong></div><div><span>OPEN TASKS</span><strong>—</strong></div><div><span>APPROVALS</span><strong>—</strong></div></section>
+    <section class="workspace"><div class="section-heading"><div><p class="eyebrow">THE OPERATIONS FLOOR</p><h2>Escritório</h2></div><span class="updated" id="updated">Sincronizando...</span></div><div class="office" id="office"></div></section>
+    <section class="lower-grid"><div class="panel"><div class="section-heading compact"><div><p class="eyebrow">PRIORITY BOARD</p><h2>Goals ativos</h2></div><span class="panel-count" id="goal-count">0</span></div><div id="goals" class="goal-list"></div></div><div class="panel"><div class="section-heading compact"><div><p class="eyebrow">EVENT STREAM</p><h2>Últimos sinais</h2></div><span class="live-label">LIVE</span></div><div id="events" class="event-list"></div></div></section>
+    <footer><span>SECOND BRAIN OS</span><span>Memory / Context / Agency</span><span>Schema v9</span></footer>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>

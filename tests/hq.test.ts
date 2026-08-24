@@ -1,0 +1,27 @@
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+import { openDatabase, applySchema } from "../storage/connection.ts";
+import { executeHqCommand, getHqSnapshot } from "../core/hq/hq-api.ts";
+import type { BrainConfig } from "../core/config/loader.ts";
+
+let directory = "";
+afterEach(() => { if (directory) rmSync(directory, { recursive: true, force: true }); directory = ""; });
+
+function config(): BrainConfig {
+  directory = mkdtempSync(path.join(tmpdir(), "second-brain-hq-"));
+  const vaultPath = path.join(directory, "vault"); mkdirSync(vaultPath);
+  return { vaultPath, dataDir: directory, dbPath: path.join(directory, "brain.db"), logLevel: "error", search: { defaultLimit: 10, maxLimit: 50 }, context: { maxChars: 12000, defaultDepth: 1, maxDepth: 3 }, ai: { baseUrl: "http://127.0.0.1:11434", model: "qwen3" } };
+}
+
+describe("Second Brain HQ integration", () => {
+  it("consome estado real e persiste goal no Obsidian", () => {
+    const cfg = config(); const db = openDatabase(cfg.dbPath); applySchema(db); db.close();
+    const snapshot = getHqSnapshot(cfg);
+    expect(snapshot.departments).toHaveLength(10); expect(snapshot.departments.find((d) => d.label === "MANAGEMENT")?.agentId).toBe("manager");
+    const result = executeHqCommand(cfg, "Quero criar um objetivo de desenvolvimento do Nutriva.");
+    expect(result.ok).toBe(true); expect(result.obsidianPath).toMatch(/^08 - Goals\//);
+    expect(existsSync(path.join(cfg.vaultPath, result.obsidianPath ?? ""))).toBe(true);
+  });
+});

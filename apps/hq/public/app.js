@@ -1,0 +1,20 @@
+const $ = (id) => document.getElementById(id);
+const state = { data: null };
+function esc(value) { return String(value ?? '').replace(/[&<>'"]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c])); }
+function render(data) {
+  state.data = data;
+  const active = data.goals.filter((g) => g.status === 'ACTIVE').length;
+  const running = data.agents.filter((a) => ['WORKING','RUNNING','PLANNING'].includes(String(a.status).toUpperCase())).length;
+  const open = data.tasks.filter((t) => !['COMPLETED','CANCELLED'].includes(String(t.status).toUpperCase())).length;
+  [$('metrics').children[0],$('metrics').children[1],$('metrics').children[2],$('metrics').children[3]].forEach((node, i) => node.querySelector('strong').textContent = [active,running,open,data.approvals.length][i]);
+  $('updated').textContent = `Atualizado ${new Date(data.generatedAt).toLocaleTimeString('pt-BR')}`;
+  $('goal-count').textContent = `${data.goals.length} TOTAL`;
+  $('office').innerHTML = data.departments.map((d) => { const agent = data.agents.find((a) => String(a.id) === d.agentId); const working = agent && ['WORKING','RUNNING','PLANNING'].includes(String(agent.status).toUpperCase()); return `<article class="desk ${agent ? '' : 'empty'}"><h3>${esc(d.label)}</h3><div class="occupant"><span class="avatar">${agent ? esc(String(agent.name).slice(0,2).toUpperCase()) : '—'}</span><div><div>${agent ? esc(agent.name) : 'Mesa disponível'}</div><div class="state"><i class="state-dot ${working ? 'working' : String(d.status).toLowerCase().includes('block') ? 'blocked' : ''}"></i>${esc(agent ? agent.status : 'UNASSIGNED')}</div></div></div></article>`; }).join('');
+  $('goals').innerHTML = data.goals.length ? data.goals.slice(0,6).map((g) => { const progress = g.target ? Math.min(100, Math.round(Number(g.current_value || 0) / Number(g.target) * 100)) : 0; return `<div class="goal-row"><span class="goal-title">${esc(g.name)}</span><span class="goal-meta">${esc(g.status)}</span><span class="goal-meta">${esc(g.project || 'Second Brain')}</span><span class="goal-meta">${g.deadline ? esc(g.deadline) : 'sem prazo'}</span><div class="bar"><i style="width:${progress}%"></i></div></div>`; }).join('') : '<div class="goal-meta">Nenhum objetivo persistido.</div>';
+  $('events').innerHTML = data.events.slice(0,8).map((e) => `<div class="event-row"><b>${esc(e.event_type)}</b><span>${esc(e.subject || 'system')}</span></div>`).join('') || '<div class="goal-meta">Aguardando sinais do runtime.</div>';
+}
+async function refresh() { try { const response = await fetch('/api/hq/state'); if (!response.ok) throw new Error('snapshot failed'); render(await response.json()); } catch { $('connection').textContent = 'CONTROL PLANE OFFLINE'; document.querySelector('.pulse').style.background = 'var(--red)'; } }
+$('execute').addEventListener('click', async () => { const text = $('command').value; if (!text.trim()) return; $('command-result').textContent = 'Manager processando...'; try { const response = await fetch('/api/hq/command', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({text}) }); const result = await response.json(); $('command-result').textContent = result.message; if (result.ok) { $('command').value = ''; await refresh(); } } catch { $('command-result').textContent = 'Control plane indisponível.'; } });
+$('command').addEventListener('keydown', (event) => { if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') $('execute').click(); });
+$('voice').addEventListener('click', () => { $('command-result').textContent = 'Áudio: transcrição ainda não implementada.'; });
+setInterval(() => $('clock').textContent = new Date().toLocaleTimeString('pt-BR'), 1000); setInterval(refresh, 5000); refresh();
