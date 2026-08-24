@@ -105,7 +105,7 @@ function ensureCommercialProfile(db: DatabaseSync): void {
 
 async function processApprovalResult(
   config: BrainConfig,
-  approval: { id: number; decision: "APPROVED" | "REJECTED"; customer: string; draft: string },
+  approval: { id: number; decision: string; customer: string; draft: string },
 ): Promise<void> {
   if (approval.decision !== "APPROVED" || !approval.customer || !approval.draft) return;
   try {

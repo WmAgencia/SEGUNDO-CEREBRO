@@ -1,22 +1,11 @@
-import { createServer, IncomingMessage, ServerResponse } from "node:http";
 import { DatabaseSync } from "node:sqlite";
 import type { BrainConfig } from "../config/loader.ts";
-import {
-  ensureCommTables,
-  resolveContact,
-  resolveConversation,
-  saveMessage,
-  isDuplicateMessage,
-  classifyIntent,
-  getCustomerProfile,
-  nextBestAction,
-  nextBestQuestion,
-  stageForIntent,
-  updateProfileFromMessage,
-  updateCustomerProfile,
-} from "../comms/pipeline.ts";
-import * as evolution from "../comms/evolution-api.ts";
-import { buildContextPackage } from "../context/context-package.ts";
+import { ensureCommTables, resolveContact, resolveConversation, saveMessage, isDuplicateMessage, classifyIntent, getCustomerProfile, nextBestAction, nextBestQuestion, stageForIntent, updateCustomerProfile, updateProfileFromMessage } from "../comms/pipeline.ts";
+import { redactSecrets } from "../exec/redact.ts";
+
+const OWNER_PHONE = () => (process.env.OWNER_WHATSAPP ?? "5515981817336").replace(/\D/g, "");
+const OPS_GROUP_ID = () => process.env.SECOND_BRAIN_OPERATIONS_GROUP ?? "120363427273069174@g.us";
+const SOURCE_ID = "src.system";
 
 export interface WebhookEvent {
   event: string;
@@ -33,7 +22,7 @@ export function handleEvolutionWebhook(
   error?: string;
   intent?: string;
   recipient?: string;
-  approval?: { id: number; decision: "APPROVED" | "REJECTED"; customer: string; draft: string };
+  approval?: { id: number; decision: string; customer: string; draft: string };
 } {
   if (!body.event || !body.instance) {
     return { processed: false, error: "missing event or instance" };
@@ -79,7 +68,7 @@ function processIncomingMessage(
   error?: string;
   intent?: string;
   recipient?: string;
-  approval?: { id: number; decision: "APPROVED" | "REJECTED"; customer: string; draft: string };
+  approval?: { id: number; decision: string; customer: string; draft: string };
 } {
   const key = (data?.key as Record<string, unknown>) ?? {};
   const externalId = String(key.id ?? "");
@@ -100,53 +89,28 @@ function processIncomingMessage(
   }
 
   const remoteJid = String(key.remoteJid ?? "");
-  const phone = remoteJid.split("@")[0] ?? remoteJid;
-  const pushName = String(data?.pushName ?? phone);
   const content = msgContent.trim();
+  const isGroup = remoteJid.includes("@g.us");
+  const isOpsGroup = isGroup && remoteJid === OPS_GROUP_ID();
+  const participantPhone = String(String(key.participant ?? "").split("@")[0]).replace(/\D/g, "");
 
-  const ownerPhone = (process.env.OWNER_WHATSAPP ?? "5515981817336").replace(/\D/g, "");
-  if (phone.replace(/\D/g, "") === ownerPhone) {
-    const decision = approvalDecision(content);
-    if (decision) {
-      const pending = db
-        .prepare(
-          "SELECT id, payload FROM approvals WHERE status='PENDING' AND type='CUSTOMER_MESSAGE' ORDER BY created_at DESC LIMIT 1",
-        )
-        .get() as { id: number; payload: string } | undefined;
-      if (!pending) {
-        return { processed: true, action: "approval_command_without_pending_approval" };
-      }
-      const approvalData = safeObject(pending.payload);
-      const customer = String(approvalData.customerPhone ?? "");
-      const draft = String(approvalData.proposedResponse ?? "");
-      db.prepare(
-        `UPDATE approvals SET status=?, resolved_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'),
-         resolved_by=?, decision=? WHERE id=? AND status='PENDING'`,
-      ).run(decision, ownerPhone, decision, pending.id);
-      logEvent(db, decision === "APPROVED" ? "approval_approved" : "approval_rejected", ownerPhone, {
-        approvalId: pending.id,
-      });
-      return {
-        processed: true,
-        action: `approval_${decision.toLowerCase()}`,
-        approval: { id: pending.id, decision, customer, draft },
-      };
-    }
+  if (isOpsGroup) {
+    return handleOwnerCommand(db, config, {
+      remoteJid,
+      participantPhone,
+      content,
+    });
   }
 
-  const contact = resolveContact(db, phone, pushName);
+  const phone = remoteJid.split("@")[0] ?? remoteJid;
+  const pushName = String(data?.pushName ?? phone);
+  const contact = resolveContact(db, phone.replace(/\D/g, ""), pushName);
   const conversation = resolveConversation(db, contact.id);
   saveMessage(db, conversation.id, externalId, "inbound", msgContent);
 
   const intent = classifyIntent(msgContent);
   const profile = getCustomerProfile(db, contact.id);
   const next = nextBestAction(intent, profile);
-  const contextPackage = buildContextPackage(config, {
-    task: `Responder cliente: ${intent}`,
-    entity: "project.vyntra",
-    depth: 1,
-    maxChars: 4000,
-  });
   const profilePatch = updateProfileFromMessage(profile, content);
   const question = nextBestQuestion({ ...profile, ...profilePatch });
   updateCustomerProfile(db, contact.id, {
@@ -172,35 +136,26 @@ function processIncomingMessage(
   const draft = generateDraft(intent, msgContent, question);
 
   if (next.action === "REQUEST_HUMAN") {
-    const approval = db
-      .prepare(
-        `INSERT INTO approvals (initiative_id, agent_id, type, payload, reason)
-         VALUES (?, 'sales-agent', 'CUSTOMER_MESSAGE', ?, ?)`,
-      )
-      .run(
-        "project.vyntra",
-        JSON.stringify({
-          customerPhone: phone,
-          customerMessage: content,
-          proposedResponse: draft,
-          risk: "HIGH",
-          expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-        }),
-        next.reason,
-      );
-    logEvent(db, "approval_required", phone, { approvalId: Number(approval.lastInsertRowid) });
+    db.prepare(
+      `INSERT INTO approvals (initiative_id, agent_id, type, payload, reason)
+       VALUES (?, 'sales-agent', 'CUSTOMER_MESSAGE', ?, ?)`,
+    ).run(
+      "project.vyntra",
+      JSON.stringify({
+        customerPhone: phone,
+        customerMessage: content,
+        proposedResponse: draft,
+        risk: "HIGH",
+        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+      }),
+      next.reason,
+    );
+    logEvent(db, "approval_required", phone, { approvalId: null });
   }
 
   saveMessage(db, conversation.id, `draft_${externalId}`, "outbound", draft);
   logEvent(db, "message_received", contact.id.toString(), {
-    intent,
-    action: next.action,
-    confidence: next.confidence,
-    conversationId: conversation.id,
-  });
-  logEvent(db, "context_built", contact.id.toString(), {
-    entityId: contextPackage.context.entityId,
-    memoryCount: contextPackage.memories.length,
+    intent, action: next.action, confidence: next.confidence, conversationId: conversation.id,
   });
   logEvent(db, "draft_created", null, { taskId: conversation.id });
 
@@ -210,6 +165,87 @@ function processIncomingMessage(
     intent,
     recipient: phone,
   };
+}
+
+function handleOwnerCommand(
+  db: DatabaseSync,
+  config: BrainConfig,
+  ctx: { remoteJid: string; participantPhone: string; content: string },
+): {
+  processed: boolean;
+  action?: string;
+  error?: string;
+  intent?: string;
+  recipient?: string;
+  approval?: { id: number; decision: string; customer: string; draft: string };
+} {
+  const ownerPhone = OWNER_PHONE();
+  const authorized = ctx.participantPhone === ownerPhone;
+
+  logEvent(db, "owner_command_received", ctx.participantPhone, {
+    channel: "SECOM",
+    authorized,
+    command: ctx.content.slice(0, 80),
+  });
+
+  if (!authorized) {
+    return { processed: true, action: "owner_command_denied_unauthorized_sender" };
+  }
+
+  const decision = approvalDecision(ctx.content);
+  if (decision) {
+    const pending = db
+      .prepare("SELECT id, payload FROM approvals WHERE status='PENDING' ORDER BY created_at DESC LIMIT 1")
+      .get() as { id: number; payload: string } | undefined;
+    if (!pending) {
+      return { processed: true, action: "approval_command_without_pending_approval" };
+    }
+    const approvalData = safeObject(pending.payload);
+    const customer = String(approvalData.customerPhone ?? "");
+    const draft = String(approvalData.proposedResponse ?? "");
+    db.prepare(
+      `UPDATE approvals SET status=?, resolved_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'),
+       resolved_by=?, decision=? WHERE id=? AND status='PENDING'`,
+    ).run(decision, ownerPhone, decision, pending.id);
+    logEvent(db, decision === "APPROVED" ? "approval_approved" : "approval_rejected", ownerPhone, {
+      approvalId: pending.id, actor: "OWNER", channel: "SECOM",
+    });
+    return {
+      processed: true,
+      action: `approval_${decision.toLowerCase()}`,
+      approval: { id: pending.id, decision, customer, draft },
+    };
+  }
+
+  if (/^pare tudo$/i.test(ctx.content)) {
+    activateKillSwitch(db, ownerPhone);
+    return { processed: true, action: "kill_switch_activated" };
+  }
+  if (/^(pausar agente|pause o agente)\s+(.+)$/i.test(ctx.content)) {
+    const m = /^(pausar agente|pause o agente)\s+(.+)$/i.exec(ctx.content);
+    if (m?.[2]) pauseAgent(db, m[2].trim());
+    return { processed: true, action: "agent_paused" };
+  }
+  if (/^(retomar agente|resume o agente)\s+(.+)$/i.test(ctx.content)) {
+    const m = /^(retomar agente|resume o agente)\s+(.+)$/i.exec(ctx.content);
+    if (m?.[2]) resumeAgent(db, m[2].trim());
+    return { processed: true, action: "agent_resumed" };
+  }
+  if (/qual o status|me d. o relat/i.test(ctx.content)) {
+    return { processed: true, action: "status_report_requested" };
+  }
+
+  return { processed: true, action: "owner_command_acknowledged_not_implemented" };
+}
+
+function activateKillSwitch(db: DatabaseSync, by: string): void {
+  db.prepare("INSERT INTO events (event_type, subject, payload) VALUES ('kill_switch_activated', ?, ?)").run(by, "{}");
+}
+function pauseAgent(db: DatabaseSync, agentId: string): void {
+  db.prepare("UPDATE agents SET status='PAUSED' WHERE id=?").run(agentId);
+}
+function resumeAgent(db: DatabaseSync, agentId: string): void {
+  db.prepare("UPDATE agents SET status='AVAILABLE' WHERE id=?").run(agentId);
 }
 
 function approvalDecision(text: string): "APPROVED" | "REJECTED" | null {
@@ -258,26 +294,4 @@ function logEvent(
 ): void {
   db.prepare("INSERT INTO events (event_type, subject, payload) VALUES (?, ?, ?)")
     .run(eventType, subject, JSON.stringify(payload));
-}
-
-export function startWebhookServer(config: BrainConfig, port = 3001): void {
-  const server = createServer((req: IncomingMessage, res: ServerResponse) => {
-    if (req.method === "POST" && req.url?.includes("/webhooks/evolution")) {
-      let body = "";
-      req.on("data", (chunk) => { body += chunk; });
-      req.on("end", () => {
-        try {
-          const parsed = JSON.parse(body) as WebhookEvent;
-          const result = handleEvolutionWebhook(config, parsed);
-          res.writeHead(200, { "Content-Type": "application/json" });
-          res.end(JSON.stringify(result));
-        } catch {
-          res.writeHead(400).end('{"error":"invalid JSON"}');
-        }
-      });
-    } else {
-      res.writeHead(404).end();
-    }
-  });
-  server.listen(port);
 }
