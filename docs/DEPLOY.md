@@ -1,51 +1,116 @@
 # Deploy — Second Brain OS
 
-## Arquitetura honesta
+## Arquitetura
 
-O Second Brain tem duas naturezas:
-
-1. **Runtime persistente** (SQLite local, OpenCode CLI, workers, webhook server,
-   HQ server). Requer máquina/host com Node 24+, filesystem e processos
-   de longa duração.
-2. **Frontend estático** (`apps/hq/public`). Pode ser servido por qualquer CDN.
-
-## O que a Vercel pode hospedar hoje
-
-- `apps/hq/public` como site estático (após apontar `fetch` para a URL do HQ server).
-
-## O que NÃO roda na Vercel (sem mudança arquitetural)
-
-- `brain.db` (SQLite em arquivo) — Vercel é efêmero/serverless.
-- `OpenCodeRuntime` (spawn de processo CLI).
-- Webhook Evolution (precisa endpoint sempre-on; usar Railway/Fly/VPS).
-
-## Caminho recomendado
-
-| Componente | Host sugerido |
-|---|---|
-| HQ frontend | Vercel (estático) |
-| HQ API + Runtime | VPS/Railway/Fly.io (`npm run hq`) |
-| Webhook Evolution | mesmo host do runtime (`core/webhooks`) |
-| Tunnel dev | Cloudflare Tunnel / ngrok |
-
-## Preparar deploy estático do HQ na Vercel
-
-```bash
-cd apps/hq/public
-vercel --prod
+```
+VERCEL (frontend estático)          RAILWAY / VPS (runtime persistente)
+apps/hq/public                      apps/hq/server.ts + core/ + storage/
+         │                                  │
+         │  HTTPS (CORS habilitado)        │
+         └────────── API calls ────────────┘
+                                            │
+                                    ┌───────┼───────┐
+                                    │       │       │
+                                SQLite   OpenCode  Workers
+                               (volume)    CLI     (future)
 ```
 
-Configurar variável de ambiente no frontend (ou hardcode) apontando
-`VITE_API_BASE` / `API_BASE` para a URL pública do runtime.
+## O que roda onde
+
+| Componente | Vercel | Railway/VPS | Local dev |
+|---|---|---|---|
+| Frontend HQ | ✅ estático | — | ✅ |
+| HQ API (`/api/hq/*`) | ❌ | ✅ Dockerfile | ✅ `npm run hq` |
+| SQLite (`brain.db`) | ❌ efêmero | ✅ volume | ✅ ficheiro local |
+| OpenCode Runtime | ❌ serverless | ✅ no container | ✅ global install |
+| SSE events | ❌ conexão longa | ✅ | ✅ |
+| Webhook Evolution | ❌ precisa sempre-on | ✅ | ✅ |
+| Obsidian Vault | ❌ filesystem | ⚠️ sync externo | ✅ path local |
+
+---
+
+## Deploy Backend (Railway)
+
+### 1. Criar projeto
+
+```bash
+railway init
+railway link
+```
+
+### 2. Configurar variáveis de ambiente
+
+No dashboard Railway → Variables:
+
+```env
+HQ_HOST=0.0.0.0
+HQ_PORT=3200
+SECOND_BRAIN_VAULT=/data/vault
+HQ_CORS_ORIGINS=https://segundo-cerebro-git-main-consecom.vercel.app,https://segundo-cerebro-consecom.vercel.app
+```
+
+Opcional:
+
+```env
+EVOLUTION_API_URL=...
+EVOLUTION_API_KEY=...
+EVOLUTION_INSTANCE=SECOM
+OWNER_WHATSAPP=5515981817336
+SECOND_BRAIN_OPERATIONS_GROUP=120363427273069174@g.us
+SECOND_BRAIN_EXTERNAL_AI_URL=...
+SECOND_BRAIN_EXTERNAL_AI_KEY=...
+```
+
+### 3. Adicionar volume persistente para o banco
+
+Dashboard → Service → Volumes:
+- Mount path: `/data`
+- O SQLite (`brain.db`) e o vault Obsidian devem viver aqui.
+
+### 4. Deploy
+
+```bash
+railway up
+```
+
+O `Dockerfile` instala Node 24, copia `core/`, `storage/`, `config/` e
+`apps/hq/`, instala dependências e inicia o servidor na porta 3200.
+
+### 5. Configurar CORS
+
+Adicionar a URL do frontend Vercel em `HQ_CORS_ORIGINS`.
+Por padrão é `*` (aceita tudo) — restringir em produção.
+
+---
+
+## Deploy Frontend (Vercel)
+
+1. Root Directory: `apps/hq`
+2. Framework: None (static)
+3. Build command: vazio (estático)
+4. Output directory: `public`
+
+Após o backend estar no ar, editar `apps/hq/public/config.js`:
+
+```js
+window.HQ_API_URL = "https://teu-projeto.up.railway.app";
+```
+
+Ou usar uma env var da Vercel que substitua esse arquivo no build.
+
+---
 
 ## Segurança antes de expor publicamente
 
-- [ ] Adicionar autenticação ao HQ server (hoje é localhost-only).
-- [ ] TLS obrigatório.
+- [ ] Autenticação no HQ server (hoje aberto).
+- [ ] TLS obrigatório (Railway fornece automaticamente).
 - [ ] Rate limit no `/api/hq/command`.
-- [ ] Nunca expor `.env.local` (Evolution keys etc.).
+- [ ] Restringir `HQ_CORS_ORIGINS` aos domínios exatos.
+- [ ] Nunca commitar `.env.local`.
+
+---
 
 ## Status atual
 
-`NOT DEPLOYED` — preparação concluída, deploy real pendente de decisão
-de infraestrutura externa (requer autorização do owner).
+Backend: `READY TO DEPLOY` (Dockerfile + railway.json criados, não deployado).
+Frontend: `DEPLOYED` na Vercel mas mostra OFFLINE até o backend estar acessível.
