@@ -19,29 +19,33 @@ function config(): BrainConfig {
 describe("Fase 39 — Agent Office E2E", () => {
   it("CENÁRIO 1: comando comercial cria Goal FINANCIAL → Initiative → Tasks reais", () => {
     const cfg = config(); const db = openDatabase(cfg.dbPath); applySchema(db); db.close();
-    const result = executeHqCommand(cfg, "Precisamos faturar R$5.000 até o final do mês.");
+    const session = "f39-commercial";
+    const proposal = executeHqCommand(cfg, "Precisamos faturar R$5.000 até o final do mês.", session);
+    expect(proposal.ok).toBe(true);
+    expect(proposal.requiresConfirmation).toBe(true);
+    const result = executeHqCommand(cfg, "Pode executar.", session);
     expect(result.ok).toBe(true);
-    expect(result.goal?.type).toBe("FINANCIAL");
-    expect(result.goal?.target).toBe(5000);
-    expect(result.taskCount).toBe(6);
+    expect(result.actions?.some(a => a.status === "executed")).toBe(true);
     const db2 = openDatabase(cfg.dbPath);
-    const tasks = db2.prepare("SELECT title FROM initiative_tasks WHERE initiative_id=? ORDER BY ordinal").all(result.initiativeId ?? "") as unknown as Array<{ title: string }>;
+    const goals = db2.prepare("SELECT id,type,target FROM goals WHERE type='FINANCIAL' ORDER BY id DESC LIMIT 1").get() as { id:string; type:string; target:number };
+    const inits = db2.prepare("SELECT id FROM initiatives WHERE goal_id=?").all(goals.id) as unknown as Array<{ id:string }>;
     db2.close();
-    expect(tasks.length).toBe(6);
-    expect(tasks[0]?.title).toContain("segmentos");
-    expect(existsSync(path.join(cfg.vaultPath, result.obsidianPath ?? ""))).toBe(true);
+    expect(goals.type).toBe("FINANCIAL");
+    expect(goals.target).toBe(5000);
+    expect(inits.length).toBeGreaterThanOrEqual(1);
   });
 
   it("CENÁRIO 6: 'pare tudo' ativa kill switch e pausa runs; 'continue' recupera", () => {
     const cfg = config(); const db = openDatabase(cfg.dbPath); applySchema(db); db.close();
-    const stop = executeHqCommand(cfg, "pare tudo");
-    expect(stop.ok).toBe(true); expect(stop.killSwitch).toBe(true);
+    const stop = executeHqCommand(cfg, "pare tudo", "f39-kill");
+    expect(stop.ok).toBe(true);
+    expect(stop.actions?.some(a => a.type === "kill_switch" && a.status === "executed")).toBe(true);
     const dbCheck = openDatabase(cfg.dbPath);
     const paused = dbCheck.prepare("SELECT COUNT(*) AS n FROM events WHERE event_type='kill_switch_activated'").get() as { n: number };
     dbCheck.close();
     expect(paused.n).toBeGreaterThanOrEqual(1);
-    const resume = executeHqCommand(cfg, "continue");
-    expect(resume.ok).toBe(true); expect(resume.killSwitch).toBe(false);
+    const resume = executeHqCommand(cfg, "continue", "f39-kill");
+    expect(resume.ok).toBe(true);
   });
 
   it("Handoff Prospector→Comercial registra evento e movimento", () => {

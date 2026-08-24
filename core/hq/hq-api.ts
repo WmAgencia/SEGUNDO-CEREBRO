@@ -9,6 +9,7 @@ import { refreshQueue, assignTask, createHandoff, acceptHandoff } from "../agent
 import { SPECIALIZED_AGENTS } from "../agents/specialized.ts";
 import { setKillSwitch } from "../autonomous/cycle.ts";
 import { OFFICE_DEPARTMENTS, deskPosition, departmentForAgent, officeBounds } from "./office.ts";
+import { managerChat } from "./manager.ts";
 
 export interface HqSnapshot {
   generatedAt: string;
@@ -73,77 +74,16 @@ const COMMERCIAL_PLAN = [
   "Consolidar resultados",
 ];
 
-export function executeHqCommand(config: BrainConfig, text: string): HqCommandResult {
-  const command = text.trim();
-  if (!command) return { ok: false, message: "Digite uma ordem para o Manager." };
-
-  if (/^(pare tudo|para tudo|kill switch|stop everything)$/i.test(command)) return activateKillSwitch(config);
-  if (/^(continue|continue a iniciativa atual|retomar|resume)$/i.test(command)) return resumeOperations(config);
-
-  const goalMatch = command.match(/(?:criar|definir|iniciar|quero|precisamos).*?(?:objetivo|goal)\s*(?:de|para|:)?\s*(.+)$/i) ?? command.match(/(?:quero|precisamos)\s+(?:alcan[cç]ar|faturar|fazer)\s+(.+)$/i);
-  if (goalMatch?.[1]) {
-    const name = goalMatch[1].trim().replace(/\s+até\s+.*$/i, "").trim();
-    const deadlineMatch = command.match(/até\s+(?:o\s+final\s+do\s+mês|dia\s+([\d/]+))/i);
-    const isCommercial = /r\$\s*[\d.,]+|venda|vendas|faturar|receita|lead/i.test(command);
-    const db = new DatabaseSync(config.dbPath);
-    try {
-      ensureHqAgents(db);
-      const goal = createGoal(db, {
-        name,
-        type: isCommercial ? "FINANCIAL" : "PROJECT",
-        status: "ACTIVE",
-        ownerAgent: "manager",
-        metricName: isCommercial ? "receita" : undefined,
-        target: isCommercial ? Number((command.match(/r\$\s*([\d.,]+)/i)?.[1] ?? "").replace(/\./g, "").replace(",", ".")) || undefined : undefined,
-        currentValue: isCommercial ? 0 : undefined,
-        deadline: deadlineMatch?.[1] ?? (deadlineMatch ? endOfMonthIso() : undefined),
-      });
-      const obsidianPath = persistGoalKnowledge(config, goal);
-      db.prepare("INSERT INTO events (event_type, subject, payload) VALUES ('command_center_order', 'manager', ?)").run(JSON.stringify({ text: command, goalId: goal.id }));
-
-      let initiativeId: string | undefined;
-      let taskCount: number | undefined;
-      let initiativePath: string | undefined;
-
-      if (/nutriva/i.test(command)) {
-        const initiative = createInitiative(db, { title: `MVP Nutriva: ${goal.name}`, description: "Plano inicial de desenvolvimento do Nutriva.", goalId: goal.id, project: "nutriva", status: "PROPOSED" });
-        const plan = planInitiative(db, initiative.id, ["Auditar estado atual do Nutriva", "Implementar próxima melhoria de baixo risco", "Executar testes e avaliação"]);
-        dispatchFirst(db, initiative.id);
-        initiativeId = initiative.id; taskCount = plan.length;
-        initiativePath = persistInitiativeKnowledge(config, goal, initiative, plan.map((t) => t.title));
-      } else if (isCommercial) {
-        const initiative = createInitiative(db, { title: `Aquisição comercial: ${name}`, description: "Plano comercial para atingir a meta.", goalId: goal.id, project: "consecom", status: "PROPOSED" });
-        const plan = planInitiative(db, initiative.id, COMMERCIAL_PLAN);
-        dispatchFirst(db, initiative.id);
-        initiativeId = initiative.id; taskCount = plan.length;
-        initiativePath = persistInitiativeKnowledge(config, goal, initiative, plan.map((t) => t.title));
-      }
-
-      return {
-        ok: true,
-        message: initiativeId ? `Goal criado com ${taskCount} tasks: ${goal.name}` : `Goal criado: ${goal.name}`,
-        goal, initiativeId, taskCount, obsidianPath: initiativePath ?? obsidianPath,
-      };
-    } finally { db.close(); }
-  }
-
-  if (/status|progresso|o que est[aá] acontecendo|como est[aá]/i.test(command)) {
-    const world = buildWorldState(config);
-    const active = world.counts["goals"] ?? 0;
-    const running = world.activeRuns.length;
-    return { ok: true, message: `${active} goals no banco, ${running} runs ativos, ${world.blockedRuns.length} bloqueados.` };
-  }
-
-  if (/por que.*bloquead/i.test(command)) {
-    const db = new DatabaseSync(config.dbPath);
-    try {
-      const blocked = db.prepare("SELECT id,state,retry_count FROM agent_runs WHERE state IN ('BLOCKED','WAITING_HUMAN') ORDER BY updated_at DESC LIMIT 3").all() as unknown as Array<{ id: string; state: string; retry_count: number }>;
-      const message = blocked.length ? blocked.map((b) => `${b.id}: ${b.state} (retries=${b.retry_count})`).join("; ") : "Nenhum run bloqueado agora.";
-      return { ok: true, message };
-    } finally { db.close(); }
-  }
-
-  return { ok: true, message: "Comando recebido pelo Manager; nenhuma ação automatizada mapeada para este texto." };
+export function executeHqCommand(config: BrainConfig, text: string, sessionKey = 'default'): HqCommandResult & { type?: string; intent?: string; actions?: Array<{type:string;status:string}>; requiresConfirmation?: boolean } {
+  const response = managerChat(config, text, sessionKey);
+  return {
+    ok: true,
+    message: response.message,
+    type: response.type,
+    intent: response.intent,
+    actions: response.actions,
+    requiresConfirmation: response.requiresConfirmation,
+  };
 }
 
 function dispatchFirst(db: DatabaseSync, initiativeId: string): void {

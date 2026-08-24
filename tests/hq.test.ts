@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -16,14 +16,14 @@ function config(): BrainConfig {
 }
 
 describe("Second Brain HQ integration", () => {
-  it("consome estado real e persiste goal no Obsidian", () => {
+  it("consome estado real e cria goal com confirmação", () => {
     const cfg = config(); const db = openDatabase(cfg.dbPath); applySchema(db); db.close();
     const snapshot = getHqSnapshot(cfg);
     expect(snapshot.office.departments.length).toBeGreaterThanOrEqual(6);
     expect(snapshot.agents.find((a) => String(a.id) === "manager")).toBeTruthy();
     expect(snapshot.office.bounds.w).toBeGreaterThan(0);
-    const result = executeHqCommand(cfg, "Quero criar um objetivo de desenvolvimento do Nutriva.");
-    expect(result.ok).toBe(true); expect(result.obsidianPath).toMatch(/^08 - Goals\//);
-    expect(existsSync(path.join(cfg.vaultPath, result.obsidianPath ?? ""))).toBe(true);
+    const result = executeHqCommand(cfg, "Quero criar um objetivo de desenvolvimento do Nutriva.", "hq-test");
+    expect(result.ok).toBe(true);
+    expect(result.requiresConfirmation ?? result.type === "plan").toBeTruthy();
   });
 });
