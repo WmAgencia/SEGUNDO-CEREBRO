@@ -49,7 +49,7 @@ export class OpenCodeRuntime {
     }
 
     const sessionId = `oc.${Date.now().toString(36)}`;
-    const model = options.model ?? "opencode/nemotron-3-ultra-free";
+     const model = options.model ?? "opencode/nemotron-3.5-lightning-free";
     const agent = options.agent ?? "build";
 
     return new Promise<OpenCodeSession>((resolve) => {
@@ -65,10 +65,14 @@ export class OpenCodeRuntime {
       ];
 
        const command = resolveOpenCodeCommand();
-       const proc = spawn(command, ["run", "--model", model, "--agent", agent, task], {
-        cwd: workspacePath,
-        env: { ...process.env },
-        timeout: options.timeoutMs ?? 300000,
+       const commandArgs = ["run", "--model", model, "--agent", agent, task];
+       const executable = process.platform === "win32" ? (process.env.ComSpec ?? "cmd.exe") : command;
+       const executableArgs = process.platform === "win32" ? ["/d", "/s", "/c", [command, ...commandArgs.map(quoteShellArg)].join(" ")] : commandArgs;
+       const proc = spawn(executable, executableArgs, {
+         cwd: workspacePath,
+         env: { ...process.env },
+         shell: false,
+         timeout: options.timeoutMs ?? 300000,
       });
 
       this.activeProcesses.set(sessionId, proc);
@@ -86,7 +90,7 @@ export class OpenCodeRuntime {
           status: code === 0 ? "COMPLETED" : "FAILED",
           startedAt: new Date().toISOString(),
           endedAt: new Date().toISOString(),
-          output: redactSecrets(stdout.slice(0, 5000)),
+           output: redactSecrets(`${stdout}\n${stderr}`.slice(0, 5000)),
           filesChanged: this.extractFilesChanged(stdout),
           testsPassed: /passed|OK|success/i.test(stdout),
           error: code !== 0 ? redactSecrets(stderr.slice(0, 1000)) : null,
@@ -122,8 +126,10 @@ export class OpenCodeRuntime {
   }
 }
 
+function quoteShellArg(value: string): string { return `"${value.replace(/"/g, '\\"')}"`; }
+
 export function resolveOpenCodeCommand(): string {
   const local = process.platform === "win32" ? "node_modules/.bin/opencode.cmd" : "node_modules/.bin/opencode";
   if (existsSync(local)) return local;
-  return process.platform === "win32" ? "opencode.cmd" : "opencode";
+  return "opencode";
 }

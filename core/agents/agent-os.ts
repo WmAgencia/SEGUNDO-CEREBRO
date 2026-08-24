@@ -322,7 +322,7 @@ export function startTaskWork(db: DatabaseSync, taskId: number, agentId: string)
     )
     .run(agentId, taskId, task.initiative_id);
   db.prepare(
-    "UPDATE initiative_tasks SET status='RUNNING', updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?",
+    "UPDATE initiative_tasks SET status='RUNNING', started_at=COALESCE(started_at,strftime('%Y-%m-%dT%H:%M:%fZ','now')), updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?",
   ).run(taskId);
   setAgentStatus(db, agentId, "WORKING");
   logEvent(db, "task_started", agentId, { taskId });
@@ -407,11 +407,13 @@ export function submitResult(
       reworkCount,
     );
   const resultId = Number(inserted.lastInsertRowid);
+  db.prepare("UPDATE initiative_tasks SET result=?, evidence=?, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?")
+    .run(input.output, JSON.stringify(input.artifacts ?? []), input.taskId);
 
   let awaitingReview = false;
   if (validation !== "VALID") {
     db.prepare(
-      "UPDATE initiative_tasks SET status='FAILED', updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?",
+      "UPDATE initiative_tasks SET status='FAILED', completed_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'), updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?",
     ).run(input.taskId);
     logEvent(db, "task_failed", input.agentId, { taskId: input.taskId, validation });
   } else if (input.requiresReview) {
@@ -473,7 +475,7 @@ function finalizeCompletion(
   resultId: number,
 ): void {
   db.prepare(
-    "UPDATE initiative_tasks SET status='COMPLETED', updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?",
+    "UPDATE initiative_tasks SET status='COMPLETED', completed_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'), updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?",
   ).run(taskId);
   adjustWorkload(db, agentId, -1);
   logEvent(db, "task_completed", agentId, { taskId, resultId });

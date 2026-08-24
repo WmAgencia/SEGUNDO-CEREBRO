@@ -1,4 +1,4 @@
-export const SCHEMA_VERSION = 9;
+export const SCHEMA_VERSION = 12;
 
 export interface Migration {
   from: number;
@@ -403,7 +403,15 @@ export const SCHEMA_STATEMENTS: readonly string[] = [
     required_tools TEXT NOT NULL DEFAULT '[]',
     priority      REAL,
     updated_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-    status        TEXT NOT NULL DEFAULT 'PENDING'
+    status        TEXT NOT NULL DEFAULT 'PENDING',
+    description   TEXT NOT NULL DEFAULT '',
+    started_at    TEXT,
+    completed_at  TEXT,
+    result        TEXT,
+    evidence      TEXT NOT NULL DEFAULT '[]',
+    workspace     TEXT,
+    budget        TEXT NOT NULL DEFAULT '{}',
+    risk_level    TEXT NOT NULL DEFAULT 'LOW'
   )`,
   "CREATE INDEX IF NOT EXISTS idx_init_tasks ON initiative_tasks(initiative_id)",
 
@@ -681,6 +689,31 @@ export const MIGRATIONS: readonly Migration[] = [
       "ALTER TABLE tools_registry ADD COLUMN output_schema TEXT NOT NULL DEFAULT '{}'",
       "ALTER TABLE tools_registry ADD COLUMN side_effects TEXT NOT NULL DEFAULT '[]'",
       "ALTER TABLE tools_registry ADD COLUMN risk_level TEXT NOT NULL DEFAULT 'LOW'",
+    ],
+  },
+  {
+    from: 9,
+    statements: [
+      "ALTER TABLE initiative_tasks ADD COLUMN description TEXT NOT NULL DEFAULT ''",
+      "ALTER TABLE initiative_tasks ADD COLUMN started_at TEXT",
+      "ALTER TABLE initiative_tasks ADD COLUMN completed_at TEXT",
+      "ALTER TABLE initiative_tasks ADD COLUMN result TEXT",
+      "ALTER TABLE initiative_tasks ADD COLUMN evidence TEXT NOT NULL DEFAULT '[]'",
+      "ALTER TABLE initiative_tasks ADD COLUMN workspace TEXT",
+      "ALTER TABLE initiative_tasks ADD COLUMN budget TEXT NOT NULL DEFAULT '{}'",
+      "ALTER TABLE initiative_tasks ADD COLUMN risk_level TEXT NOT NULL DEFAULT 'LOW'",
+    ],
+  },
+  {
+    from: 10,
+    statements: [
+      "ALTER TABLE initiative_tasks ADD COLUMN priority REAL",
+    ],
+  },
+  {
+    from: 11,
+    statements: [
+      "ALTER TABLE initiative_tasks ADD COLUMN updated_at TEXT NOT NULL DEFAULT '1970-01-01T00:00:00.000Z'",
     ],
   },
 ];

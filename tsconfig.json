@@ -16,6 +16,7 @@
   },
   "include": [
     "apps/cli/src/**/*.ts",
+    "apps/hq/**/*.ts",
     "core/**/*.ts",
     "storage/**/*.ts",
     "connectors/**/*.ts",

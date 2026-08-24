@@ -174,3 +174,17 @@ handoffs que não estejam persistidos.
 
 Áudio/transcrição e realtime por event stream ainda estão `NOT IMPLEMENTED`;
 o frontend informa isso explicitamente e usa refresh moderado do snapshot.
+
+## 10. Fase 38 — operação HQ
+
+O HQ também expõe `/api/hq/events` como SSE, `/api/hq/transcribe` com
+`TranscriptionProvider` e `/api/hq/execute` para execução de engenharia no
+sandbox Nutriva. O último endpoint chama o `OpenCodeRuntime` existente e roda
+testes/typecheck independentes antes de usar `submitResult`; falhas permanecem
+`FAILED` e carregam evidência.
+
+O Command Center pode criar um Goal Nutriva, sua Initiative e três tasks reais,
+persistindo o plano consolidado em `08 - Goals/`. O schema v12 inclui os
+campos operacionais de task e mantém migrações legadas idempotentes. Agentes
+especializados possuem definições no registry com status `PAUSED` até haver
+capacidade/provider autorizado; salas sem ocupante permanecem `UNASSIGNED`.

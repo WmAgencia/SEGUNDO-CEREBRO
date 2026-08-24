@@ -19,7 +19,7 @@ describe("Second Brain HQ integration", () => {
   it("consome estado real e persiste goal no Obsidian", () => {
     const cfg = config(); const db = openDatabase(cfg.dbPath); applySchema(db); db.close();
     const snapshot = getHqSnapshot(cfg);
-    expect(snapshot.departments).toHaveLength(10); expect(snapshot.departments.find((d) => d.label === "MANAGEMENT")?.agentId).toBe("manager");
+    expect(snapshot.departments).toHaveLength(10); expect(snapshot.departments.find((d) => d.label.startsWith("MANAGER"))?.agentId).toBe("manager");
     const result = executeHqCommand(cfg, "Quero criar um objetivo de desenvolvimento do Nutriva.");
     expect(result.ok).toBe(true); expect(result.obsidianPath).toMatch(/^08 - Goals\//);
     expect(existsSync(path.join(cfg.vaultPath, result.obsidianPath ?? ""))).toBe(true);
