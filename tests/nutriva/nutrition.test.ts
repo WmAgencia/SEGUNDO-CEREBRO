@@ -47,6 +47,30 @@ describe("nutrition engine", () => {
     expect(r.kcal).toBe(0);
   });
 
+  it("handles NaN quantity gracefully", () => {
+    const r = calculateFoodNutrition(arroz, NaN);
+    expect(r.kcal).toBe(0);
+    expect(r.protein).toBe(0);
+    expect(r.carbs).toBe(0);
+    expect(r.fat).toBe(0);
+  });
+
+  it("handles Infinity quantity gracefully", () => {
+    const r = calculateFoodNutrition(arroz, Infinity);
+    expect(r.kcal).toBe(0);
+    expect(r.protein).toBe(0);
+    expect(r.carbs).toBe(0);
+    expect(r.fat).toBe(0);
+  });
+
+  it("handles -Infinity quantity gracefully", () => {
+    const r = calculateFoodNutrition(arroz, -Infinity);
+    expect(r.kcal).toBe(0);
+    expect(r.protein).toBe(0);
+    expect(r.carbs).toBe(0);
+    expect(r.fat).toBe(0);
+  });
+
   it("day totals sum correctly", () => {
     const breakfast = { kcal: 420, protein: 20, carbs: 50, fat: 12 };
     const lunch = { kcal: 650, protein: 45, carbs: 60, fat: 18 };

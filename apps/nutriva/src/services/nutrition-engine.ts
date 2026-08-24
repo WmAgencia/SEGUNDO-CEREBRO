@@ -28,7 +28,7 @@ export function calculateFoodNutrition(
   food: FoodItem,
   quantity: number,
 ): MealTotals {
-  if (quantity <= 0) return zeros();
+  if (!Number.isFinite(quantity) || quantity <= 0) return zeros();
   if (food.referenceWeight <= 0) return zeros();
   const ratio = quantity / food.referenceWeight;
   return {

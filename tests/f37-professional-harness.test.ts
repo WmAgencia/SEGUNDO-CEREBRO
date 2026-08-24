@@ -12,7 +12,8 @@ describe("fase 37 professional agent harness", () => {
     const run = harness.start({ task: "Continue o desenvolvimento do Nutriva.", agentId: "opencode", projectId: "nutriva" });
     expect(run.state).toBe("IDLE");
     harness.move(run.id, "READY"); harness.move(run.id, "PLANNING"); harness.move(run.id, "RUNNING"); harness.checkpoint(run.id, { current: "worker" });
-    expect(harness.kill(run.id).state).toBe("CANCELLED");
+    expect(harness.kill(run.id).state).toBe("PAUSED");
+    expect(harness.resume(run.id).state).toBe("READY");
     expect(db.prepare("SELECT count(*) AS n FROM agent_checkpoints").get()).toEqual({ n: 1 });
     expect(canTransition("PAUSED", "RUNNING")).toBe(false);
     db.close();

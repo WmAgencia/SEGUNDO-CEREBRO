@@ -86,13 +86,21 @@ export class ProfessionalAgentHarness {
       if (reason) { this.trace(id, "budget_stopped", run.state, { reason }, run.correlationId); return this.move(id, "BLOCKED"); }
       if (run.state === "CANCELLED" || run.state === "PAUSED" || run.state === "BLOCKED") return run;
       this.checkpoint(id, { step: step.id, title: step.title });
-      const result = await worker(step, run);
-      if (!result.ok) { this.move(id, "EVALUATING"); this.move(id, "REWORKING"); const current = this.get(id); if ((budget.maxRetries ?? 3) <= current.retryCount) return this.move(id, "BLOCKED"); this.db.prepare("UPDATE agent_runs SET retry_count=retry_count+1 WHERE id=?").run(id); run = this.move(id, "RUNNING"); continue; }
+      let result = await worker(step, run);
+      while (!result.ok) {
+        this.move(id, "EVALUATING"); this.move(id, "REWORKING");
+        const current = this.get(id);
+        if ((budget.maxRetries ?? 3) <= current.retryCount) return this.move(id, "BLOCKED");
+        this.db.prepare("UPDATE agent_runs SET retry_count=retry_count+1 WHERE id=?").run(id);
+        run = this.move(id, "RUNNING");
+        this.checkpoint(id, { step: step.id, title: step.title, rework: true, retry: this.get(id).retryCount });
+        result = await worker(step, run);
+      }
       this.db.prepare("UPDATE agent_runs SET current_step=current_step+1,completed_steps=json_insert(completed_steps,'$[#]',?),pending_steps=json_remove(pending_steps,'$[0]'),last_successful_action=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?").run(step.id, result.output ?? step.title, id);
     }
     run = this.move(id, "EVALUATING"); this.recordEval(id, "pipeline_completed", "PASS", "all planned steps completed", steps.map((s) => s.id)); return this.move(id, "COMPLETED");
   }
-  kill(id: string): AgentRun { const r = this.get(id); this.db.prepare("UPDATE agent_runs SET kill_switch=1,state='CANCELLED' WHERE id=?").run(id); this.trace(id, "kill_switch", "CANCELLED", {}, r.correlationId); return this.get(id); }
+  kill(id: string): AgentRun { const r = this.get(id); this.db.prepare("UPDATE agent_runs SET kill_switch=1,previous_state=state,state='PAUSED' WHERE id=?").run(id); this.trace(id, "kill_switch", "PAUSED", {}, r.correlationId); return this.get(id); }
   recordEval(id: string, criterion: string, status: EvalStatus, feedback = "", evidence: string[] = []): void { this.db.prepare("INSERT INTO agent_evals (run_id,criterion,status,feedback,evidence) VALUES (?,?,?,?,?)").run(id, criterion, status, feedback, JSON.stringify(evidence)); }
   private trace(id: string, event: string, state: string, payload: Record<string, unknown>, correlationId: string, causationId?: string): void { this.db.prepare("INSERT INTO agent_traces (run_id,event,state,payload,correlation_id,causation_id) VALUES (?,?,?,?,?,?)").run(id, event, state, JSON.stringify(payload), correlationId, causationId ?? null); }
   private map(r: Record<string, unknown>): AgentRun { return { id: String(r.id), sessionId: String(r.session_id), state: String(r.state) as AgentState, currentStep: Number(r.current_step), completedSteps: JSON.parse(String(r.completed_steps)), pendingSteps: JSON.parse(String(r.pending_steps)), retryCount: Number(r.retry_count), correlationId: String(r.correlation_id), causationId: r.causation_id ? String(r.causation_id) : undefined }; }

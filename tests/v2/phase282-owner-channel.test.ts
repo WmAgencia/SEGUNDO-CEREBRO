@@ -116,6 +116,12 @@ describe("fase 28.2 — owner command channel", () => {
     expect(result.action).toBe("kill_switch_activated");
   });
 
+  it("OWNER + SECOM + '@brain continue' → desativa kill switch", () => {
+    const result = sendAs(OPS_GROUP, OWNER_PHONE, "@brain continue", "cmd-continue-001");
+    expect(result.processed).toBe(true);
+    expect(result.action).toBe("kill_switch_deactivated");
+  });
+
   it("Approval já resolvida + novo APROVAR → sem duplicação", () => {
     const pendingBefore = db()
       .prepare("SELECT COUNT(*) AS c FROM approvals WHERE status='PENDING'")

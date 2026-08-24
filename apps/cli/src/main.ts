@@ -19,6 +19,7 @@ import { ask } from "../../../core/orchestrator/brain-orchestrator.ts";
 import { LocalLlamaCppProvider } from "../../../core/ai/llamacpp-provider.ts";
 import { extractMemoryProposals } from "../../../core/ai/memory-extractor.ts";
 import { saveConfirmedMemory } from "../../../core/ai/save-memory.ts";
+import { compilePersonalContext, isAna } from "../../../core/personal/personal-agent.ts";
 import { getProjectIntelligence } from "../../../core/projects/project-intelligence.ts";
 import {
   listCandidates,
@@ -900,6 +901,30 @@ program
   });
 
 program.command("stats").description("mostra contagens do índice").action(printStats);
+
+program
+  .command("personal-context <phone>")
+  .description("audita contexto pessoal sem exibir conteúdo íntimo")
+  .action((phone: string) => {
+    if (!isAna(phone)) throw new BrainError("VALIDATION_ERROR", "personal context restricted to Ana");
+    const config = loadConfigOrExit();
+    const db = openDatabase(config.dbPath);
+    try {
+      const context = compilePersonalContext(db, phone);
+      if (!context) throw new BrainError("NOT_FOUND", "personal contact not found");
+      process.stdout.write(JSON.stringify({
+        personId: context.personId,
+        conversationId: context.conversationId,
+        hasLastMessage: Boolean(context.lastMessage),
+        topicCount: context.currentTopics.length,
+        knownFacts: context.knownFacts.length,
+        sources: context.sources,
+        privacyScope: "PERSONAL/RELATIONSHIP",
+        commercialContextIncluded: false,
+        confidence: context.confidence,
+      }, null, 2) + "\n");
+    } finally { db.close(); }
+  });
 
 program
   .command("health")
