@@ -1,4 +1,4 @@
-export const SCHEMA_VERSION = 12;
+export const SCHEMA_VERSION = 14;
 
 export interface Migration {
   from: number;
@@ -255,7 +255,18 @@ export const SCHEMA_STATEMENTS: readonly string[] = [
     hash        TEXT,
     version     TEXT,
     status      TEXT NOT NULL DEFAULT 'active',
-    metadata    TEXT NOT NULL DEFAULT '{}'
+     metadata    TEXT NOT NULL DEFAULT '{}',
+     license     TEXT,
+     capabilities_json TEXT NOT NULL DEFAULT '[]',
+     tools_json TEXT NOT NULL DEFAULT '[]',
+     agents_json TEXT NOT NULL DEFAULT '[]',
+     permissions_json TEXT NOT NULL DEFAULT '[]',
+     risk_level TEXT NOT NULL DEFAULT 'LOW',
+     estimated_cost REAL,
+     dependencies_json TEXT NOT NULL DEFAULT '[]',
+     tests_json TEXT NOT NULL DEFAULT '[]',
+     documentation_url TEXT,
+     provenance_json TEXT NOT NULL DEFAULT '{}'
   )`,
   `CREATE TABLE IF NOT EXISTS skill_sources (
     id              TEXT PRIMARY KEY,
@@ -627,6 +638,13 @@ export const SCHEMA_STATEMENTS: readonly string[] = [
      id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL REFERENCES agent_runs(id),
      criterion TEXT NOT NULL, status TEXT NOT NULL, feedback TEXT NOT NULL DEFAULT '',
      evidence TEXT NOT NULL DEFAULT '[]', created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+    )`,
+  `CREATE TABLE IF NOT EXISTS model_generations (
+     id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT, task_id INTEGER, agent_id TEXT,
+     provider TEXT NOT NULL, model TEXT NOT NULL, status TEXT NOT NULL,
+     prompt_tokens INTEGER, completion_tokens INTEGER, total_tokens INTEGER,
+     cost REAL, latency_ms INTEGER, fallback_from TEXT, error TEXT,
+     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
    )`,
 ];
 
@@ -714,6 +732,23 @@ export const MIGRATIONS: readonly Migration[] = [
     from: 11,
     statements: [
       "ALTER TABLE initiative_tasks ADD COLUMN updated_at TEXT NOT NULL DEFAULT '1970-01-01T00:00:00.000Z'",
+    ],
+  },
+  { from: 12, statements: [] },
+  {
+    from: 13,
+    statements: [
+      "ALTER TABLE skills ADD COLUMN license TEXT",
+      "ALTER TABLE skills ADD COLUMN capabilities_json TEXT NOT NULL DEFAULT '[]'",
+      "ALTER TABLE skills ADD COLUMN tools_json TEXT NOT NULL DEFAULT '[]'",
+      "ALTER TABLE skills ADD COLUMN agents_json TEXT NOT NULL DEFAULT '[]'",
+      "ALTER TABLE skills ADD COLUMN permissions_json TEXT NOT NULL DEFAULT '[]'",
+      "ALTER TABLE skills ADD COLUMN risk_level TEXT NOT NULL DEFAULT 'LOW'",
+      "ALTER TABLE skills ADD COLUMN estimated_cost REAL",
+      "ALTER TABLE skills ADD COLUMN dependencies_json TEXT NOT NULL DEFAULT '[]'",
+      "ALTER TABLE skills ADD COLUMN tests_json TEXT NOT NULL DEFAULT '[]'",
+      "ALTER TABLE skills ADD COLUMN documentation_url TEXT",
+      "ALTER TABLE skills ADD COLUMN provenance_json TEXT NOT NULL DEFAULT '{}'",
     ],
   },
 ];
