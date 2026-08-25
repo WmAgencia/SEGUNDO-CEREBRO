@@ -10,3 +10,6 @@ tools/
 skills-sources/
 #env
 .env.local
+
+# Google Drive service account key
+secrets/

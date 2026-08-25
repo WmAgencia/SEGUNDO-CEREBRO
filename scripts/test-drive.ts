@@ -1,11 +1,11 @@
-/**
- * Smoke test: Google Drive archive.
- * Prereqs in .env.local: GOOGLE_DRIVE_SA_EMAIL, GOOGLE_DRIVE_SA_KEY (private key),
- * and the "Secom" folder shared with the service account email (Editor).
- * Run: npx tsx scripts/test-drive.ts
- */
+import { readFileSync } from "node:fs";
 import { archiveArtifact, loadDriveCredentials } from "../core/tools/drive-tools.ts";
 import { generateImageAndArchive } from "../core/tools/image-tools.ts";
+
+for (const line of readFileSync(".env.local", "utf8").split(/\r?\n/)) {
+  const m = line.match(/^([A-Z0-9_]+)=(.*)$/);
+  if (m && !process.env[m[1]!]) process.env[m[1]!] = m[2]!.replace(/^"(.*)"$/, "$1");
+}
 
 async function main() {
   if (!loadDriveCredentials()) {

@@ -3,7 +3,13 @@
  * Auth: Google Cloud Service Account (JWT signed RS256 via node:crypto — no SDK).
  * The user shares the target folder (e.g. "Secom") with the service account email.
  *
- * Env vars:
+ * Env vars (OAuth user delegation — preferred, uploads count against user's quota):
+ *   GOOGLE_DRIVE_CLIENT_ID     — OAuth client ID (Desktop app type)
+ *   GOOGLE_DRIVE_CLIENT_SECRET — OAuth client secret
+ *   GOOGLE_DRIVE_REFRESH_TOKEN — obtained via scripts/drive-auth.ts (one-time)
+ *
+ * Env vars (Service Account fallback — cannot create FILES due to Google's
+ * zero-quota policy for SAs; folders still work):
  *   GOOGLE_DRIVE_SA_EMAIL  — service account email
  *   GOOGLE_DRIVE_SA_KEY    — private key (\n escaped) OR
  *   GOOGLE_DRIVE_SA_FILE   — path to service account JSON key file
@@ -23,6 +29,7 @@ const SCOPE = "https://www.googleapis.com/auth/drive";
 const FOLDER_MIME = "application/vnd.google-apps.folder";
 
 export interface DriveCreds { client_email: string; private_key: string }
+export interface OAuthCreds { client_id: string; client_secret: string; refresh_token: string }
 export interface DriveUploadResult {
   status: "ARCHIVED" | "NOT_CONFIGURED" | "FAILED";
   /** Logical path relative to root folder, e.g. `imagens/24-08-26/logo.png`. */
@@ -35,6 +42,15 @@ export interface DriveUploadResult {
 interface TokenCache { token: string; expiresAt: number }
 let cachedToken: TokenCache | null = null;
 const folderCache = new Map<string, string>();
+
+/** OAuth user credentials (preferred — uploads count against the real user's quota). */
+export function loadOAuthCredentials(): OAuthCreds | null {
+  const client_id = process.env.GOOGLE_DRIVE_CLIENT_ID;
+  const client_secret = process.env.GOOGLE_DRIVE_CLIENT_SECRET;
+  const refresh_token = process.env.GOOGLE_DRIVE_REFRESH_TOKEN;
+  if (client_id && client_secret && refresh_token) return { client_id, client_secret, refresh_token };
+  return null;
+}
 
 export function loadDriveCredentials(): DriveCreds | null {
   const file = process.env.GOOGLE_DRIVE_SA_FILE;
@@ -54,9 +70,40 @@ function base64url(input: Buffer | string): string {
   return Buffer.from(input).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 }
 
-/** Exchange a signed JWT for an OAuth2 access token (cached until near expiry). */
-export async function getAccessToken(creds: DriveCreds): Promise<string> {
+/** Exchange an authorization code (one-time setup) for refresh + access tokens. */
+export async function exchangeAuthCode(code: string, clientId: string, clientSecret: string, redirectUri = "urn:ietf:wg:oauth:2.0:oob"): Promise<{ access_token: string; refresh_token: string; expires_in: number }> {
+  const res = await fetch(TOKEN_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ code, client_id: clientId, client_secret: clientSecret, redirect_uri: redirectUri, grant_type: "authorization_code" }).toString(),
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!res.ok) throw new Error(`Code exchange failed: HTTP ${res.status} — ${await res.text()}`);
+  return await res.json() as { access_token: string; refresh_token: string; expires_in: number };
+}
+
+/** Refresh an OAuth access token using the stored refresh token. */
+async function refreshAccessToken(oauth: OAuthCreds): Promise<string> {
+  const res = await fetch(TOKEN_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ client_id: oauth.client_id, client_secret: oauth.client_secret, refresh_token: oauth.refresh_token, grant_type: "refresh_token" }).toString(),
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!res.ok) throw new Error(`Token refresh failed: HTTP ${res.status}`);
+  const data = await res.json() as { access_token?: string; expires_in?: number };
+  if (!data.access_token) throw new Error("Token refresh returned no access_token");
+  cachedToken = { token: data.access_token, expiresAt: Date.now() + (data.expires_in ?? 3600) * 1000 };
+  return data.access_token;
+}
+
+/** Get an OAuth2 access token. Prefers user OAuth (real quota), falls back to service account JWT. */
+export async function getAccessToken(saCreds?: DriveCreds): Promise<string> {
   if (cachedToken && cachedToken.expiresAt > Date.now() + 60_000) return cachedToken.token;
+  const oauth = loadOAuthCredentials();
+  if (oauth) return refreshAccessToken(oauth);
+  const creds = saCreds ?? loadDriveCredentials();
+  if (!creds) throw new Error("NOT_CONFIGURED");
   const now = Math.floor(Date.now() / 1000);
   const header = base64url(JSON.stringify({ alg: "RS256", typ: "JWT" }));
   const claims = base64url(JSON.stringify({ iss: creds.client_email, scope: SCOPE, aud: TOKEN_URL, iat: now, exp: now + 3600 }));
@@ -78,9 +125,7 @@ export async function getAccessToken(creds: DriveCreds): Promise<string> {
 }
 
 async function driveFetch(path: string, init?: RequestInit): Promise<Response> {
-  const creds = loadDriveCredentials();
-  if (!creds) throw new Error("NOT_CONFIGURED");
-  const token = await getAccessToken(creds);
+  const token = await getAccessToken();
   return fetch(path, {
     ...init,
     headers: { Authorization: `Bearer ${token}`, ...(init?.headers ?? {}) },
@@ -171,8 +216,8 @@ export async function archiveArtifact(opts: {
   thingName?: string;
 }): Promise<DriveUploadResult> {
   const path = buildArchivePath(opts.category, opts.fileName, opts.thingName);
-  const creds = loadDriveCredentials();
-  if (!creds) return { status: "NOT_CONFIGURED", path, error: "GOOGLE_DRIVE_SA_* env vars not configured" };
+  const configured = Boolean(loadOAuthCredentials() ?? loadDriveCredentials());
+  if (!configured) return { status: "NOT_CONFIGURED", path, error: "GOOGLE_DRIVE_* env vars not configured" };
   try {
     const rootName = process.env.GOOGLE_DRIVE_ROOT_FOLDER ?? "Secom";
     const rootId = await findOrCreateFolder(rootName);
