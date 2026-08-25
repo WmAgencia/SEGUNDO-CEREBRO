@@ -1,2 +1,0 @@
-[env] OPENROUTER_API_KEY=present
-Second Brain HQ on http://127.0.0.1:3999
