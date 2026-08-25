@@ -233,3 +233,52 @@ export async function archiveArtifact(opts: {
     return { status: "FAILED", path, error: error instanceof Error ? error.message : String(error) };
   }
 }
+
+export interface ProjectRecordResult extends DriveUploadResult { folderPath?: string }
+
+/**
+ * Register a software project in Drive: <root>/projetos/<project-name>/registro.txt.
+ * The txt records project link, credentials (master account by convention), and status.
+ * No date level — one stable folder per project, updated over its lifetime.
+ */
+export async function archiveProjectRecord(opts: {
+  projectName: string;
+  link?: string;
+  login?: string;
+  senha?: string;
+  status?: string;
+  notes?: string;
+}): Promise<ProjectRecordResult> {
+  const slug = slugify(opts.projectName);
+  const path = `projetos/${slug}/registro.txt`;
+  const configured = Boolean(loadOAuthCredentials() ?? loadDriveCredentials());
+  if (!configured) return { status: "NOT_CONFIGURED", path, error: "GOOGLE_DRIVE_* env vars not configured" };
+  try {
+    const rootName = process.env.GOOGLE_DRIVE_ROOT_FOLDER ?? "Secom";
+    const rootId = await findOrCreateFolder(rootName);
+    const projetosId = await findOrCreateFolder("projetos", rootId);
+    const projectId = await findOrCreateFolder(slug, projetosId);
+
+    const stamp = new Date().toISOString().replace("T", " ").slice(0, 16);
+    const lines = [
+      "=== REGISTRO DO PROJETO ===",
+      `Nome: ${opts.projectName}`,
+      `Criado em: ${stamp}`,
+      "",
+      `Link: ${opts.link ?? "(a definir)"}`,
+      "",
+      "-- Acesso --",
+      `Login: ${opts.login ?? "master"}`,
+      `Senha: ${opts.senha ?? "(a definir)"}`,
+      "",
+      `Status: ${opts.status ?? "Iniciado"}`,
+      ...(opts.notes ? ["", `Observacoes: ${opts.notes}`] : []),
+      "",
+    ];
+    // Overwrite semantics: always named registro.txt inside the project folder.
+    const uploaded = await uploadFile("registro.txt", lines.join("\r\n"), "text/plain", projectId);
+    return { status: "ARCHIVED", path, fileId: uploaded.id, webViewLink: uploaded.webViewLink, folderPath: `projetos/${slug}` };
+  } catch (error) {
+    return { status: "FAILED", path, error: error instanceof Error ? error.message : String(error) };
+  }
+}

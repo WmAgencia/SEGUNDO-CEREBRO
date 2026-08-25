@@ -384,11 +384,12 @@ export async function managerChat(config: BrainConfig, text: string, sessionKey 
     if (s.llmProposedPlan) { s.llmProposedPlan = false; return resp(s, 'Ok, plano descartado. O que você prefere?'); }
   }
 
-  // ── 3.5 CREATIVE REQUESTS — deterministic planning, never depends on LLM markers ──
+  // ── 3.5 CREATIVE/PROJECT REQUESTS — deterministic planning, never depends on LLM markers ──
   // Latest intent wins: overwrite any stale pending plan.
   const wantsVideo = /\b(v[íi]deo|videos|anima[çc][ãa]o|anime)\b/i.test(t) || /\b(gerar?|crie|criar?)\s+(um\s+)?v[íi]deo\b/i.test(t);
   const wantsImage = !wantsVideo && /\b(logo|imagem|banner|arte|ilustra[çc][ãa]o|criativo|thumbnail|capa)\b/i.test(t) && /\b(gere|gerar|crie|criar|faz|fa[çc]a|fazer)\b/i.test(t);
-  if ((wantsImage || wantsVideo) && !/^Gerar (imagem|v[íi]deo):/i.test(s.pending?.tasks[0] ?? '')) {
+  const wantsDev = !wantsVideo && !wantsImage && /\b(site|sites|sistema|sistemas|aplicativo|app|plataforma|dashboard|landing\s?page|webapp|e-?commerce|projeto)\b/i.test(t) && /\b(criar?|crie|desenvolver|desenvolve|fazer|faz|iniciar|inicia|construir|montar|come[çc]ar)\b/i.test(t);
+  if ((wantsImage || wantsVideo || wantsDev) && !/^Gerar (imagem|v[íi]deo):|^Registrar projeto no Drive:/i.test(s.pending?.tasks[0] ?? '')) {
     return doPropose(trimmed, s);
   }
 
@@ -545,6 +546,7 @@ function classifyFallback(text: string, s: ManagerSession): ManagerIntent {
   if (/^(plane|brain|build)$/i.test(t)) return 'MODE_SWITCH';
   if (s.pending && /^(pode|executa|sim|vai|manda ver|go)\b/i.test(t)) return 'EXECUTION_CONFIRM';
   if (/\b(v[íi]deo|videos|anima[çc][ãa]o)\b/i.test(t)) return 'GOAL_CREATION';
+  if (/\b(site|sites|sistema|sistemas|aplicativo|app|plataforma|dashboard|landing\s?page|webapp|e-?commerce|projeto)\b/i.test(t) && /\b(criar?|crie|desenvolver|desenvolve|fazer|faz|iniciar|inicia|construir|montar|come[çc]ar)\b/i.test(t)) return 'GOAL_CREATION';
   if (/\b(logo|imagem|banner|arte|ilustra[çc][ãa]o|criativo|thumbnail|capa)\b/i.test(t) && /ger|cri|fa[çc]|faz/i.test(t)) return 'GOAL_CREATION';
   if (/(quero|precisamos|preciso)\s+(de\s+)?(faturar|alcançar|vender|criar)\s+/i.test(t) || /r\$\s*[\d.,]+/i.test(t)) return 'GOAL_CREATION';
   return 'CHAT';
@@ -558,7 +560,16 @@ function extractPlan(text: string): PendingPlan {
   const isNutriva = /nutriva/i.test(t);
   const wantsVideo = /\b(v[íi]deo|videos|anima[çc][ãa]o)\b/i.test(t);
   const isImage = !wantsVideo && /\b(logo|imagem|banner|arte|ilustra[çc][ãa]o|criativo|thumbnail|capa)\b/i.test(t);
+  const wantsDev = !wantsVideo && !isImage && /\b(site|sites|sistema|sistemas|aplicativo|aplicativo|app|plataforma|dashboard|landing\s?page|webapp|e-?commerce|projeto)\b/i.test(t) && /\b(criar?|crie|desenvolver|desenvolve|fazer|faz|iniciar|inicia|construir|montar|começar|comeca)\b/i.test(t);
   let name = t.replace(/^(quero|precisamos|preciso|vamos)\s+(de\s+|a\s+)?/i,'').replace(/^(faturar|alcançar|atingir|criar)\s+/i,'').replace(/\s+até\s+.*$/i,'').replace(/\s+este\s+mês.*$/i,'').trim();
+  if (wantsDev) {
+    const projectName = name
+      .replace(/^(por\s+favor\s*)?(pode\s+)?/i,'')
+      .replace(/^(criar|crie|desenvolver|desenvolve|fazer|faz|iniciar|inicia|construir|montar|come[çc]ar)\s+(um|uma|o|a|novo|nova)?\s*/i,'')
+      .replace(/^(projeto|projetos)\s+(de\s+)?/i,'')
+      .trim() || 'Novo projeto';
+    return { goalName:`Projeto: ${projectName}`, goalType:'PROJECT', target, tasks:[`Registrar projeto no Drive: ${projectName}`], project:isNutriva?'nutriva':undefined };
+  }
   if (wantsVideo || isImage) {
     const prefix = wantsVideo ? 'Gerar vídeo' : 'Gerar imagem';
     const prompt = name.replace(/^\s*designer\s*,?\s*/i,'').replace(/^(por\s+favor\s*)?(pode\s+)?(gere|gerar|crie|criar|faz|fa[çc]a|fazer)\s+(um\s+|uma\s+)?(logo\s+|imagem\s+|v[íi]deo\s+|anima[çc][ãa]o\s+)?/i,'').trim() || 'criativo solicitado';
@@ -595,15 +606,18 @@ function doExecute(config: BrainConfig, s: ManagerSession): ManagerResponse {
     planInitiative(db, init.id, plan.tasks);
     const ready = refreshQueue(db, init.id);
     const isDesignPlan = /^Gerar (imagem|v[íi]deo):/i.test(plan.tasks[0] ?? '');
+    const isProjectRecord = /^Registrar projeto no Drive:/i.test(plan.tasks[0] ?? '');
     if (isDesignPlan && !db.prepare("SELECT id FROM agents WHERE id='designer-agent'").get())
       db.prepare("INSERT INTO agents (id,name,description,domains,capabilities,permissions,status) VALUES ('designer-agent','Designer','Criativos e imagens','[\"MARKETING\"]','[\"image_generation\"]','[\"context\",\"image_generate\",\"drive_upload\"]','AVAILABLE')").run();
-    if (ready[0]!==undefined) assignTask(db, ready[0], { agentId:isDesignPlan?'designer-agent':'manager', reason:'Manager delegou primeira task' });
+    if (isProjectRecord && !db.prepare("SELECT id FROM agents WHERE id='engineering-agent'").get())
+      db.prepare("INSERT INTO agents (id,name,description,domains,capabilities,permissions,status) VALUES ('engineering-agent','Engenharia','Projetos e sistemas','[\"DESENVOLVIMENTO\"]','[\"execute\"]','[\"context\",\"execute\",\"drive_upload\"]','AVAILABLE')").run();
+    if (ready[0]!==undefined) assignTask(db, ready[0], { agentId:isDesignPlan?'designer-agent':isProjectRecord?'engineering-agent':'manager', reason:'Manager delegou primeira task' });
     persistInitiativeKnowledge(config, goal, init, plan.tasks);
     if (!process.env.VITEST && ready[0] !== undefined) {
       void runInitiativeAutonomously(config, init.id, '').catch(() => {});
     }
     s.pending = null; s.lastPlanSummary = plan.goalName;
-    const agentLabel = isDesignPlan ? 'Designer Agent' : 'agente responsável';
+    const agentLabel = isDesignPlan ? 'Designer Agent' : isProjectRecord ? 'Engineering Agent' : 'agente responsável';
     return { type:'execution', mode:s.mode, message:`Objetivo "${plan.goalName}" criado com ${plan.tasks.length} tarefa(s). Primeira task dispatchada para o ${agentLabel}. Tudo registrado no Obsidian.`, intent:'GOAL_CREATION', actions:[{type:'create_goal',status:'executed',detail:goal.id},{type:'create_initiative',status:'executed',detail:init.id}], requiresConfirmation:false };
   } finally { db.close(); }
 }

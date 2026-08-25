@@ -7,6 +7,7 @@ import { persistGoalKnowledge } from "../obsidian/knowledge-records.ts";
 import { getGoal, updateGoal } from "../goals/goal-engine.ts";
 import { generateImageAndArchive } from "../tools/image-tools.ts";
 import { generateVideoAndArchive } from "../tools/video-tools.ts";
+import { archiveProjectRecord } from "../tools/drive-tools.ts";
 import { logEvent } from "../exec/execution-engine.ts";
 
 const NUTRIVA_WORKSPACE = path.resolve(process.cwd(), "apps", "nutriva");
@@ -20,8 +21,20 @@ export interface AutonomousResult {
   goalComplete: boolean;
 }
 
-/** Creative tasks run through internal generation pipelines (Pollinations + Google Drive), not OpenCode. */
+/** Creative/project tasks run through internal pipelines (Pollinations/Drive), not OpenCode. */
 function isDesignTask(title: string): boolean { return /^Gerar (imagem|v[íi]deo):/i.test(title); }
+function isProjectRecordTask(title: string): boolean { return /^Registrar projeto no Drive:/i.test(title); }
+
+async function executeProjectRecordTask(taskTitle: string): Promise<{ status: 'COMPLETED'|'FAILED'; output: string; error?: string }> {
+  const projectName = taskTitle.replace(/^Registrar projeto no Drive:\s*/i, '').trim();
+  if (!projectName) return { status: 'FAILED', output: '', error: 'nome do projeto vazio' };
+  const r = await archiveProjectRecord({ projectName, status: 'Iniciado', notes: 'Registro criado automaticamente pelo agente.' });
+  if (r.status === 'ARCHIVED') {
+    const link = r.webViewLink ?? '';
+    return { status: 'COMPLETED', output: `Projeto registrado no Drive (${r.folderPath}). Arquivo: ${link}` };
+  }
+  return { status: 'FAILED', output: '', error: r.error ?? 'falha ao registrar projeto no Drive' };
+}
 
 async function executeDesignTask(taskTitle: string): Promise<{ status: 'COMPLETED'|'FAILED'; output: string; error?: string }> {
   const isVideo = /^Gerar v[íi]deo:/i.test(taskTitle);
@@ -47,9 +60,11 @@ export async function executeNextTask(config: BrainConfig, taskId: number, agent
     const task = db.prepare("SELECT id,title,initiative_id,workspace,assigned_agent FROM initiative_tasks WHERE id=?").get(taskId) as {id:number;title:string;initiative_id:string;workspace:string|null;assigned_agent:string|null} | undefined;
     if (!task) throw new Error(`Task ${taskId} not found`);
 
-    if (isDesignTask(task.title)) {
+    if (isDesignTask(task.title) || isProjectRecordTask(task.title)) {
       const agent = task.assigned_agent ?? 'designer-agent';
-      const design = await executeDesignTask(task.title);
+      const design = isProjectRecordTask(task.title)
+        ? await executeProjectRecordTask(task.title)
+        : await executeDesignTask(task.title);
       db.prepare("UPDATE initiative_tasks SET status=?, result=?, completed_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'), updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?")
         .run(design.status, design.output.slice(0, 1000), taskId);
       logEvent(db, 'task_completed', agent, { taskId, kind: 'design' });

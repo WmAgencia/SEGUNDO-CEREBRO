@@ -150,4 +150,22 @@ describe("Manager Conversacional", () => {
     expect(tasks[0]!.title).toMatch(/^Gerar v[íi]deo:/i);
     expect(tasks[0]!.assigned_agent).toBe("designer-agent");
   });
+
+  it("TEST projeto dev: cria task de registro no Drive", async () => {
+    const cfg = config(); const db = openDatabase(cfg.dbPath); applySchema(db); db.close();
+    const session = "test-dev-flow";
+    const proposal = await managerChat(cfg, "Quero iniciar um projeto de site para a Nutriva", session);
+    expect(proposal.requiresConfirmation).toBe(true);
+    expect(proposal.type).toBe("plan");
+    expect(proposal.message).toMatch(/Registrar projeto no Drive/i);
+    const execution = await managerChat(cfg, "Pode", session);
+    expect(execution.type).toBe("execution");
+    expect(execution.message).toContain("Engineering Agent");
+    const db2 = openDatabase(cfg.dbPath);
+    const tasks = db2.prepare("SELECT title, assigned_agent FROM initiative_tasks ORDER BY id").all() as Array<{ title: string; assigned_agent: string | null }>;
+    db2.close();
+    expect(tasks.length).toBe(1);
+    expect(tasks[0]!.title).toMatch(/^Registrar projeto no Drive:\s*site/i);
+    expect(tasks[0]!.assigned_agent).toBe("engineering-agent");
+  });
 });

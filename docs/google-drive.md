@@ -8,12 +8,16 @@ Os agentes arquivam automaticamente o que produzem no Google Drive
 ```
 Secom/
   imagens/24-08-26/logo-clinica.png        <- imagens vão direto na pasta da data
+  videos/24-08-26/promo-nutriva.mp4        <- vídeos gerados (Pollinations)
   campanhas/black-friday-2026/24-08-26/brief.txt
-  prospeccoes/clinicas-nutricao-ribeirao/25-08-26/leads.csv
+  prospeccoes/clinicas-nutricao/25-08-26/leads.csv
+  projetos/<nome-do-projeto>/registro.txt  <- um registro por projeto de software
 ```
 
 - `imagens/<data>/arquivo` — imagens geradas pelo Designer (Pollinations FLUX).
+- `videos/<data>/arquivo` — vídeos gerados pelo Designer (Pollinations gen API).
 - `<categoria>/<nome-da-coisa>/<data>/arquivo` — campanhas, prospecções, relatórios etc.
+- `projetos/<nome>/registro.txt` — registro estável por projeto: link, login (master), senha, status.
 - Datas usam hífens (`24-08-26`) porque o Drive para Windows não sincroniza pastas com `/`.
 
 ## Setup (uma vez, ~5 min)
