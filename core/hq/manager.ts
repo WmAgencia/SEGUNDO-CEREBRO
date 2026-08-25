@@ -384,6 +384,11 @@ export async function managerChat(config: BrainConfig, text: string, sessionKey 
     if (s.llmProposedPlan) { s.llmProposedPlan = false; return resp(s, 'Ok, plano descartado. O que você prefere?'); }
   }
 
+  // ── 3.5 DESIGN REQUESTS — deterministic planning, never depends on LLM markers ──
+  if (!s.pending && /\b(logo|imagem|banner|arte|ilustra[çc][ãa]o|criativo|thumbnail|capa)\b/i.test(t) && /\b(gere|gerar|crie|criar|faz|fa[çc]a|fazer)\b/i.test(t)) {
+    return doPropose(trimmed, s);
+  }
+
   // ── 4. Call LLM for natural conversation ──
   const llmResponse = await callLLM(config, s, trimmed);
   if (llmResponse && llmResponse.trim()) {
