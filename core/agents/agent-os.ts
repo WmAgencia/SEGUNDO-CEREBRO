@@ -416,24 +416,33 @@ export function submitResult(
       "UPDATE initiative_tasks SET status='FAILED', completed_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'), updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?",
     ).run(input.taskId);
     logEvent(db, "task_failed", input.agentId, { taskId: input.taskId, validation });
-  } else if (input.requiresReview) {
-    awaitingReview = true;
-    db.prepare(
-      "UPDATE initiative_tasks SET status='WAITING', updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?",
-    ).run(input.taskId);
-    db.prepare(
-      "UPDATE agent_results SET review_status='PENDING' WHERE id=?",
-    ).run(resultId);
-    requestReview(db, {
-      taskId: input.taskId,
-      initiativeId: task.initiative_id,
-      agentId: input.agentId,
-      resultId,
-      reviewerAgentId: input.reviewerAgentId,
-    });
-    setAgentStatus(db, input.agentId, "WAITING");
   } else {
-    finalizeCompletion(db, config, input.taskId, input.agentId, resultId);
+    // Evaluator obrigatório: iniciativa marcada required_review=1 força revisão
+    // independente (qa-agent) mesmo sem requiresReview explícito — spec §17/§18.
+    const initiative = db
+      .prepare("SELECT required_review FROM initiatives WHERE id=?")
+      .get(task.initiative_id) as { required_review: number } | undefined;
+    const forcedReview = input.requiresReview === true || (!input.requiresReview && initiative?.required_review === 1);
+    const reviewer = input.reviewerAgentId ?? (initiative?.required_review === 1 ? "qa-agent" : undefined);
+    if (forcedReview) {
+      awaitingReview = true;
+      db.prepare(
+        "UPDATE initiative_tasks SET status='WAITING', updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?",
+      ).run(input.taskId);
+      db.prepare(
+        "UPDATE agent_results SET review_status='PENDING' WHERE id=?",
+      ).run(resultId);
+      requestReview(db, {
+        taskId: input.taskId,
+        initiativeId: task.initiative_id,
+        agentId: input.agentId,
+        resultId,
+        reviewerAgentId: reviewer,
+      });
+      setAgentStatus(db, input.agentId, "WAITING");
+    } else {
+      finalizeCompletion(db, config, input.taskId, input.agentId, resultId);
+    }
   }
 
   if (input.metricDelta) {

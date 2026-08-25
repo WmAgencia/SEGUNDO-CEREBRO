@@ -292,7 +292,7 @@ function handleOwnerCommand(
     return { processed: true, action: "kill_switch_activated" };
   }
   if (/^(continue|retomar|resume|retomar agente|resume o agente)$/i.test(command)) {
-    setKillSwitch(false);
+    setKillSwitch(false, db);
     db.prepare("UPDATE agent_runs SET kill_switch=0,state='READY' WHERE kill_switch=1 AND state='PAUSED'").run();
     logEvent(db, "kill_switch_deactivated", ownerPhone, { channel: "SECOM" });
     return { processed: true, action: "kill_switch_deactivated" };
@@ -318,7 +318,7 @@ function handleOwnerCommand(
 }
 
 function activateKillSwitch(db: DatabaseSync, by: string): void {
-  setKillSwitch(true);
+  setKillSwitch(true, db);
   db.prepare("UPDATE agent_runs SET kill_switch=1,previous_state=state,state='PAUSED' WHERE state NOT IN ('COMPLETED','FAILED','CANCELLED')").run();
   db.prepare("INSERT INTO events (event_type, subject, payload) VALUES ('kill_switch_activated', ?, ?)").run(by, "{}");
 }

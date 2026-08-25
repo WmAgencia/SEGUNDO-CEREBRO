@@ -13,6 +13,47 @@ export function touchHeartbeat(db: DatabaseSync, runId: string): void {
   ).run(runId);
 }
 
+/* ─────────────── ORCHESTRATOR RUN WRAPPER ─────────────── */
+
+export interface OrchestratorRunHandle {
+  runId: string;
+  beat(): void;
+  finish(state: "COMPLETED" | "FAILED", detail?: Record<string, unknown>): void;
+}
+
+/**
+ * Cria um agent_run REAL para uma execução do orquestrador, com heartbeat.
+ * Uso: const run = startOrchestratorRun(...); try { ... run.finish("COMPLETED") }
+ * O handle.beat() deve ser chamado periodicamente durante execuções longas.
+ */
+export function startOrchestratorRun(
+  db: DatabaseSync,
+  args: { taskId: number; agentId: string; initiativeId?: string },
+): OrchestratorRunHandle {
+  const runId = `run.t${args.taskId}.${Date.now().toString(36)}`;
+  db.prepare(
+    `INSERT INTO agent_runs (id, session_id, agent_id, task_id, initiative_id, state, correlation_id)
+     VALUES (?, ?, ?, ?, ?, 'RUNNING', ?)`,
+  ).run(runId, `orch-${args.initiativeId ?? "adhoc"}`, args.agentId, args.taskId, args.initiativeId ?? null, args.initiativeId ?? `orch-t${args.taskId}`);
+  touchHeartbeat(db, runId);
+  return {
+    runId,
+    beat() {
+      touchHeartbeat(db, runId);
+    },
+    finish(state, detail) {
+      touchHeartbeat(db, runId);
+      db.prepare(
+        "UPDATE agent_runs SET state=?, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?",
+      ).run(state, runId);
+      db.prepare(
+        "INSERT INTO events (event_type, subject, payload) VALUES (?, ?, ?)",
+      ).run(state === "COMPLETED" ? "task.completed" : "task.failed", args.agentId,
+        JSON.stringify({ runId, taskId: args.taskId, initiativeId: args.initiativeId, ...(detail ?? {}) }));
+    },
+  };
+}
+
 export interface OrphanReport {
   detected: string[];
   recovered: string[];

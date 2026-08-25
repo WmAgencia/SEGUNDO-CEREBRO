@@ -855,6 +855,12 @@ function doExecute(config: BrainConfig, s: ManagerSession): ManagerResponse {
     persistGoalKnowledge(config, goal);
     db.prepare("INSERT INTO events (event_type,subject,payload) VALUES ('command_center_order','manager',?)").run(JSON.stringify({goalId:goal.id}));
     const init = createInitiative(db, { title:plan.goalName, description:'Plano via Command Center.', goalId:goal.id, project:plan.project??undefined, status:'PROPOSED' });
+    if (plan.kind === 'dev') {
+      // Evaluator obrigatório: toda task de iniciativa dev passa pelo QA (spec §17/§18).
+      db.prepare("UPDATE initiatives SET required_review=1 WHERE id=?").run(init.id);
+      if (!db.prepare("SELECT id FROM agents WHERE id='qa-agent'").get())
+        db.prepare("INSERT INTO agents (id,name,description,domains,capabilities,permissions,status) VALUES ('qa-agent','QA','Validação independente','[\"QUALIDADE\"]','[\"review\"]','[\"context\",\"review\"]','AVAILABLE')").run();
+    }
     planInitiative(db, init.id, plan.tasks);
     const ready = refreshQueue(db, init.id);
     const targetAgent = plan.kind === 'dev' ? 'engineering-agent'
@@ -879,7 +885,7 @@ function doExecute(config: BrainConfig, s: ManagerSession): ManagerResponse {
 
 function doStop(config: BrainConfig, s: ManagerSession): ManagerResponse {
   const db = new DatabaseSync(config.dbPath);
-  try { setKillSwitch(true);
+  try { setKillSwitch(true, db);
     db.prepare("UPDATE agent_runs SET kill_switch=1,previous_state=state,state='PAUSED' WHERE state NOT IN ('COMPLETED','FAILED','CANCELLED')").run();
     db.prepare("INSERT INTO events (event_type,subject,payload) VALUES ('kill_switch_activated','manager','{}')").run();
     return { type:'execution', mode:s.mode, message:'Kill switch ativado. Runs pausados.', intent:'STOP', actions:[{type:'kill_switch',status:'executed'}], requiresConfirmation:false };
@@ -888,7 +894,7 @@ function doStop(config: BrainConfig, s: ManagerSession): ManagerResponse {
 
 function doResume(config: BrainConfig, s: ManagerSession): ManagerResponse {
   const db = new DatabaseSync(config.dbPath);
-  try { setKillSwitch(false);
+  try { setKillSwitch(false, db);
     const r = db.prepare("UPDATE agent_runs SET kill_switch=0,state='READY' WHERE kill_switch=1 AND state='PAUSED'").run();
     return { type:'execution', mode:s.mode, message:`Operações retomadas (${r.changes} runs recuperados).`, intent:'RESUME', actions:[{type:'resume',status:'executed'}], requiresConfirmation:false };
   } finally { db.close(); }

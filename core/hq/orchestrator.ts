@@ -18,6 +18,8 @@ import type { BrainConfig } from "../config/loader.ts";
 import { DatabaseSync } from "node:sqlite";
 import { executeNextTask } from "./autonomous-executor.ts";
 import { refreshQueue } from "../agents/agent-os.ts";
+import { touchHeartbeat, startOrchestratorRun } from "../agents/runtime-ops.ts";
+import { emitBus } from "./event-bus.ts";
 
 export interface OrchestratorTaskResult {
   taskId: number;
@@ -64,11 +66,30 @@ export async function runInitiativeParallel(
     ).all(initiativeId) as Array<{ id: number; assigned_agent: string; workspace: string | null }>;
 
   const runOne = async (taskId: number, agentId: string): Promise<OrchestratorTaskResult> => {
+    // Run REAL por task: linha em agent_runs + heartbeat periódico (spec §20).
+    let db = new DatabaseSync(config.dbPath);
+    const run = startOrchestratorRun(db, { taskId, agentId, initiativeId });
+    emitBus(db, "task.started", { runId: run.runId, taskId, agentId, initiativeId });
+    db.close();
+    const hb = setInterval(() => {
+      try {
+        const hdb = new DatabaseSync(config.dbPath);
+        try { run.beat(); } finally { hdb.close(); }
+      } catch { /* próximo tick tenta */ }
+    }, 30_000);
+    hb.unref?.();
     try {
       const r = await executeNextTask(config, taskId, agentId);
+      const fdb = new DatabaseSync(config.dbPath);
+      try { run.finish(r.status === "COMPLETED" ? "COMPLETED" : "FAILED", { output: String(r.output).slice(0, 400) }); } finally { fdb.close(); }
       return { taskId, title: "", agentId, status: r.status, output: r.output };
     } catch (err) {
-      return { taskId, title: "", agentId, status: "FAILED", output: err instanceof Error ? err.message : String(err) };
+      const msg = err instanceof Error ? err.message : String(err);
+      const fdb = new DatabaseSync(config.dbPath);
+      try { run.finish("FAILED", { error: msg.slice(0, 300) }); } finally { fdb.close(); }
+      return { taskId, title: "", agentId, status: "FAILED", output: msg };
+    } finally {
+      clearInterval(hb);
     }
   };
 

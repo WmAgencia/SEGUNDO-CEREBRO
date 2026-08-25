@@ -20,8 +20,12 @@ export interface AutonomousCycle {
 export function runAutonomousCycle(
   config: BrainConfig,
 ): AutonomousCycle {
-  if (globalKillSwitch) {
-    return skipped("kill_switch_active");
+  // Kill switch persistido: checa ANTES de qualquer trabalho, lendo o banco.
+  {
+    const kdb = new DatabaseSync(config.dbPath);
+    try {
+      if (isKillSwitchActive(kdb)) return skipped("kill_switch_active");
+    } finally { kdb.close(); }
   }
 
   const startedAt = new Date().toISOString();
@@ -155,12 +159,38 @@ function skipped(reason: string): AutonomousCycle {
   };
 }
 
-function isKillSwitchActive(_db: DatabaseSync): boolean {
-  return globalKillSwitch;
+function isKillSwitchActive(db: DatabaseSync): boolean {
+  if (globalKillSwitch) return true;
+  // F1 corrigido: kill switch sobrevive a restarts (persistido em index_metadata).
+  try {
+    const row = db
+      .prepare("SELECT value FROM index_metadata WHERE key='runtime.kill_switch'")
+      .get() as { value: string } | undefined;
+    return row?.value === "1";
+  } catch {
+    return globalKillSwitch;
+  }
 }
 
 let globalKillSwitch = false;
 
-export function setKillSwitch(active: boolean): void {
+const KILL_KEY = "runtime.kill_switch";
+
+/**
+ * Kill switch com persistência opcional.
+ * Com db: grava em index_metadata (sobrevive a restart) e pausa/retoma runs.
+ * Sem db: comportamento legado in-memory.
+ */
+export function setKillSwitch(active: boolean, db?: DatabaseSync): void {
   globalKillSwitch = active;
+  if (!db) return;
+  try {
+    db.prepare(
+      `INSERT INTO index_metadata (key, value) VALUES (?, ?)
+       ON CONFLICT(key) DO UPDATE SET value=excluded.value`,
+    ).run(KILL_KEY, active ? "1" : "0");
+    db.prepare(
+      "INSERT INTO events (event_type, subject, payload) VALUES (?, 'runtime', ?)",
+    ).run(active ? "kill_switch_activated" : "kill_switch_deactivated", "{}");
+  } catch {}
 }

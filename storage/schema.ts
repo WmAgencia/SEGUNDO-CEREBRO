@@ -1,4 +1,4 @@
-export const SCHEMA_VERSION = 21;
+export const SCHEMA_VERSION = 22;
 
 export interface Migration {
   from: number;
@@ -442,6 +442,7 @@ export const SCHEMA_STATEMENTS: readonly string[] = [
     approved_by      TEXT,
     approved_at      TEXT,
     rejection_reason TEXT,
+    required_review  INTEGER NOT NULL DEFAULT 0,
     created_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
     updated_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
   )`,
@@ -955,6 +956,12 @@ export const MIGRATIONS: readonly Migration[] = [
     from: 20,
     statements: [
       "ALTER TABLE agent_runs ADD COLUMN heartbeat_at TEXT",
+    ],
+  },
+  {
+    from: 21,
+    statements: [
+      "ALTER TABLE initiatives ADD COLUMN required_review INTEGER NOT NULL DEFAULT 0",
     ],
   },
 ];
