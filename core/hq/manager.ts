@@ -205,6 +205,12 @@ async function callLLM(config: BrainConfig, s: ManagerSession, userMessage: stri
 
 /* ── DETERMINISTIC FALLBACK (no LLM) ── */
 
+/** Wrapper used by managerChat: opens the DB and tries the deterministic status answer first. */
+function tryAnswerStatus(config: BrainConfig, t: string): string | null {
+  const db = new DatabaseSync(config.dbPath);
+  try { return answerOperationalStatus(db, t); } catch { return null; } finally { db.close(); }
+}
+
 /**
  * Deterministic operational-status answers from REAL system state.
  * Returns null when the question is not an operational status query.
@@ -515,7 +521,7 @@ export async function managerChat(config: BrainConfig, text: string, sessionKey 
     if (s.llmProposedPlan) { s.llmProposedPlan = false; return resp(s, 'Ok, plano descartado. O que você prefere?'); }
   }
 
-  // ── 3.5 CREATIVE/PROJECT REQUESTS — deterministic planning, never depends on LLM markers ──
+  // ── 3.5 CREATIVE/PROJECT REQUESTS ──
   // Latest intent wins: overwrite any stale pending plan.
   const wantsVideo = /\b(v[íi]deo|videos|anima[çc][ãa]o|anime)\b/i.test(t) || /\b(gerar?|crie|criar?)\s+(um\s+)?v[íi]deo\b/i.test(t);
   const wantsImage = !wantsVideo && /\b(logo|imagem|banner|arte|ilustra[çc][ãa]o|criativo|thumbnail|capa)\b/i.test(t) && /\b(gere|gerar|crie|criar|faz|fa[çc]a|fazer)\b/i.test(t);
@@ -523,6 +529,10 @@ export async function managerChat(config: BrainConfig, text: string, sessionKey 
   if ((wantsImage || wantsVideo || wantsDev) && !/^Gerar (imagem|v[íi]deo):|^Registrar projeto no Drive:/i.test(s.pending?.tasks[0] ?? '')) {
     return doPropose(trimmed, s);
   }
+
+  // ── 3.6 OPERATIONAL STATUS — deterministic, before any LLM call ──
+  const statusAnswer = tryAnswerStatus(config, t);
+  if (statusAnswer) return resp(s, statusAnswer);
 
   // ── 4. Call LLM for natural conversation ──
   const llmResponse = await callLLM(config, s, trimmed);
