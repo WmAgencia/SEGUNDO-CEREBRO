@@ -97,6 +97,10 @@ export function buildSystemContext(config: BrainConfig, s: ManagerSession): stri
     const goals = db.prepare("SELECT name,type,target,current_value,status FROM goals WHERE status='ACTIVE' ORDER BY updated_at DESC LIMIT 5").all() as unknown as Array<{name:string;type:string;target:number|null;current_value:number|null;status:string}>;
     if (goals.length) parts.push(`Objetivos ativos: ${goals.map(g=>`"${g.name}"${g.target?` (meta: ${g.target})`:''}`).join('; ')}`);
 
+    // Projects registry (formal operational units)
+    const projects = db.prepare("SELECT name,status,priority FROM projects ORDER BY CASE priority WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'normal' THEN 2 ELSE 3 END, name").all() as Array<{name:string;status:string;priority:string}>;
+    if (projects.length) parts.push(`Projetos registrados: ${projects.map((p)=>`"${p.name}" (${p.status}, prioridade ${p.priority})`).join("; ")}`);
+
     // Recent goals regardless of status (ACHIEVED/PAUSED etc. still exist!)
     const otherGoals = db.prepare("SELECT name,status,updated_at FROM goals WHERE status!='ACTIVE' ORDER BY updated_at DESC LIMIT 6").all() as unknown as Array<{name:string;status:string;updated_at:string}>;
     if (otherGoals.length) parts.push(`Outros objetivos no histórico: ${otherGoals.map(g=>`"${g.name}" (${g.status})`).join('; ')}`);
@@ -289,6 +293,12 @@ function answerOperationalStatus(db: DatabaseSync, t: string): string | null {
       const parts = [`Projeto ${row[0]!.pname}: ${done}/${row.length} atividades recentes concluídas.`];
       for (const r of row) parts.push(`"${r.title}" (${r.status}${r.assigned_agent?`, ${r.assigned_agent}`:""})`);
       return parts.join(" ");
+    }
+    // Projeto registrado mas sem tarefas ainda — resposta honesta com o estado real
+    const projRow = db.prepare("SELECT name,status FROM projects WHERE LOWER(name) LIKE ? OR id LIKE ? LIMIT 1")
+      .get(`%${raw}%`, `%${raw}%`) as {name:string;status:string}|undefined;
+    if (projRow) {
+      return `Projeto "${projRow.name}" está registrado (status: ${projRow.status}) e ainda não possui tarefas criadas. Quer que eu monte um plano para ele?`;
     }
   }
 
