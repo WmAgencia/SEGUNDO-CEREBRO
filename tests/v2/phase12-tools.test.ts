@@ -42,8 +42,8 @@ afterAll(() => {
 describe("tool registry (fase 12)", () => {
   it("seeds brain tools and registers custom ones", () => {
     const n = seedBrainTools(db);
-    expect(n).toBe(10);
-    expect(listAll().length).toBe(10);
+    expect(n).toBe(16);
+    expect(listAll().length).toBe(16);
 
     registerTool(db, {
       id: "github_search_code",
@@ -53,7 +53,7 @@ describe("tool registry (fase 12)", () => {
       permissions: ["READ", "NETWORK"],
       origin: "mcp",
     });
-    expect(listAll().length).toBe(11);
+    expect(listAll().length).toBe(17);
   });
 
   it("resolves tools by task with scoring", () => {

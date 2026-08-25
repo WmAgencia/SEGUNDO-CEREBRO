@@ -171,7 +171,27 @@ export function seedBrainTools(db: DatabaseSync): number {
     { id: "brain_sources", description: "Provenance de informacoes", category: "search", permissions: ["READ"] },
     { id: "brain_link", description: "Cria relacoes entre entidades", category: "graph", permissions: ["READ", "WRITE"] },
     { id: "brain_health", description: "Diagnostico do cerebro", category: "automation", permissions: ["READ"] },
+    // Web tools for Prospector and Research agents
+    { id: "web_search", description: "Busca na internet via DuckDuckGo (Google, sites, diretórios)", category: "web", permissions: ["READ", "NETWORK"], riskLevel: "MEDIUM",
+      inputSchema: { type:"object", properties:{ query:{type:"string"}, maxResults:{type:"number"} }, required:["query"] },
+      sideEffects: ["network_request"] },
+    { id: "web_fetch", description: "Visita uma página web e extrai o conteúdo texto", category: "web", permissions: ["READ", "NETWORK"], riskLevel: "MEDIUM",
+      inputSchema: { type:"object", properties:{ url:{type:"string",format:"uri"} }, required:["url"] },
+      sideEffects: ["network_request"] },
+    { id: "google_maps_search", description: "Busca empresas/profissionais no Google Maps", category: "web", permissions: ["READ", "NETWORK"], riskLevel: "MEDIUM",
+      inputSchema: { type:"object", properties:{ query:{type:"string"}, location:{type:"string"} }, required:["query","location"] },
+      sideEffects: ["network_request"] },
+    { id: "linkedin_search", description: "Busca profissionais no LinkedIn", category: "web", permissions: ["READ", "NETWORK"], riskLevel: "MEDIUM",
+      inputSchema: { type:"object", properties:{ query:{type:"string"}, location:{type:"string"} }, required:["query","location"] },
+      sideEffects: ["network_request"] },
+    { id: "directory_search", description: "Busca profissionais em diretórios especializados (psicólogos, nutricionistas, etc)", category: "web", permissions: ["READ", "NETWORK"], riskLevel: "MEDIUM",
+      inputSchema: { type:"object", properties:{ profession:{type:"string"}, location:{type:"string"} }, required:["profession","location"] },
+      sideEffects: ["network_request"] },
+    // Image generation for Designer agent
+    { id: "image_generate", description: "Gera imagens via OpenRouter Image API (GPT-Image-1)", category: "image", permissions: ["WRITE", "NETWORK"], riskLevel: "MEDIUM",
+      inputSchema: { type:"object", properties:{ prompt:{type:"string"}, count:{type:"number"} }, required:["prompt"] },
+      sideEffects: ["network_request", "api_cost"] },
   ];
-  for (const t of brainTools) registerTool(db, { ...t, origin: "mcp" });
+  for (const t of brainTools) registerTool(db, { ...t, origin: t.category === "web" || t.category === "image" ? "builtin" : "mcp" });
   return brainTools.length;
 }
