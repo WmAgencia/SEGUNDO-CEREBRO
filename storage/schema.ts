@@ -1,4 +1,4 @@
-export const SCHEMA_VERSION = 15;
+export const SCHEMA_VERSION = 16;
 
 export interface Migration {
   from: number;
@@ -661,6 +661,20 @@ export const SCHEMA_STATEMENTS: readonly string[] = [
      created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
      read_at TEXT
    )`,
+  `CREATE TABLE IF NOT EXISTS manager_sessions (
+     session_key TEXT PRIMARY KEY,
+     mode TEXT NOT NULL DEFAULT 'plane',
+     topic TEXT,
+     last_brain_result TEXT,
+     updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+   )`,
+  `CREATE TABLE IF NOT EXISTS manager_messages (
+     id INTEGER PRIMARY KEY AUTOINCREMENT,
+     session_key TEXT NOT NULL,
+     role TEXT NOT NULL,
+     content TEXT NOT NULL,
+     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+   )`,
 ];
 
 export interface Migration {
@@ -767,4 +781,5 @@ export const MIGRATIONS: readonly Migration[] = [
     ],
   },
   { from: 14, statements: [] },
+  { from: 15, statements: [] },
 ];

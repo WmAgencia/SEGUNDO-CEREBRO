@@ -39,9 +39,50 @@ interface ManagerSession {
 }
 
 const sessions = new Map<string, ManagerSession>();
-function getSession(key: string): ManagerSession {
-  if (!sessions.has(key)) sessions.set(key, { mode:'plane', pending:null, history:[], topic:null, lastBrainResult:null, lastPlanSummary:null, llmProposedPlan:false });
-  return sessions.get(key)!;
+
+function getSession(key: string, config?: BrainConfig): ManagerSession {
+  if (sessions.has(key)) return sessions.get(key)!;
+
+  // Try to restore from database
+  const session: ManagerSession = { mode:'plane', pending:null, history:[], topic:null, lastBrainResult:null, lastPlanSummary:null, llmProposedPlan:false };
+  if (config) {
+    try {
+      const db = new DatabaseSync(config.dbPath);
+      try {
+        const rows = db.prepare(
+          "SELECT role,content FROM manager_messages WHERE session_key=? ORDER BY id ASC LIMIT 50"
+        ).all(key) as unknown as Array<{role:string;content:string}>;
+        for (const row of rows) {
+          session.history.push({ role: row.role as 'user'|'manager', text: row.content });
+          if (row.role === 'manager' && /sobre (nutriva|vyntra|prospec|vendas|marketing)/i.test(row.content)) {
+            const m = row.content.match(/sobre (nutriva|vyntra|prospec[^—]*|vendas|marketing)/i);
+            if (m?.[1]) session.topic = m[1].trim().toLowerCase();
+          }
+        }
+        const meta = db.prepare("SELECT mode,topic,last_brain_result FROM manager_sessions WHERE session_key=?").get(key) as {mode:string;topic:string;last_brain_result:string}|undefined;
+        if (meta) {
+          session.mode = (meta.mode ?? 'plane') as ManagerMode;
+          session.topic = meta.topic ?? session.topic;
+          session.lastBrainResult = meta.last_brain_result ?? null;
+        }
+      } finally { db.close(); }
+    } catch {}
+  }
+  sessions.set(key, session);
+  return session;
+}
+
+function persistMessage(config: BrainConfig, sessionKey: string, role: 'user'|'manager', text: string, mode: ManagerMode, topic: string|null, lastBrainResult: string|null): void {
+  try {
+    const db = new DatabaseSync(config.dbPath);
+    try {
+      db.prepare("INSERT INTO manager_messages (session_key,role,content) VALUES (?,?,?)").run(sessionKey, role, text.slice(0,2000));
+      db.prepare(`INSERT INTO manager_sessions (session_key,mode,topic,last_brain_result,updated_at)
+        VALUES (?,?,?,?,strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+        ON CONFLICT(session_key) DO UPDATE SET mode=excluded.mode,topic=excluded.topic,last_brain_result=excluded.last_brain_result,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`)
+        .run(sessionKey, mode, topic ?? '', lastBrainResult ?? '');
+    } finally { db.close(); }
+  } catch {}
 }
 
 /* ── CONTEXT ASSEMBLY ── */
@@ -304,15 +345,22 @@ function resp(s: ManagerSession, message: string): ManagerResponse {
   return { type:'conversation', mode:s.mode, message, intent:'CHAT', actions:[], requiresConfirmation:false };
 }
 
+function respPersist(config: BrainConfig, sessionKey: string, s: ManagerSession, message: string): ManagerResponse {
+  s.history.push({ role:'manager', text:message });
+  persistMessage(config, sessionKey, 'manager', message, s.mode, s.topic, s.lastBrainResult);
+  return { type:'conversation', mode:s.mode, message, intent:'CHAT', actions:[], requiresConfirmation:false };
+}
+
 /* ── MAIN ENTRY ── */
 
 export async function managerChat(config: BrainConfig, text: string, sessionKey = 'default'): Promise<ManagerResponse> {
   const trimmed = text.trim();
   if (!trimmed) return { type:'conversation', mode:'plane', message:'Digite algo.', intent:'CHAT', actions:[], requiresConfirmation:false };
 
-  const s = getSession(sessionKey);
+  const s = getSession(sessionKey, config);
   s.history.push({ role:'user', text:trimmed });
   if (s.history.length > 100) s.history.shift();
+  persistMessage(config, sessionKey, 'user', trimmed, s.mode, s.topic, s.lastBrainResult);
   const t = trimmed.toLowerCase().replace(/[.!?]+$/,'');
 
   // ── 1. EXPLICIT COMMANDS (always deterministic, never LLM) ──
@@ -349,6 +397,7 @@ export async function managerChat(config: BrainConfig, text: string, sessionKey 
     s.llmProposedPlan = isProposal;
 
     if (isProposal && !s.topic) s.topic = extractTopic(trimmed);
+    persistMessage(config, sessionKey, 'manager', cleanResponse, s.mode, s.topic, s.lastBrainResult);
 
     return { type:isProposal ? 'plan' : 'conversation', mode:s.mode, message:cleanResponse, intent:'CHAT',
       actions:isProposal ? [{type:'create_goal',status:'proposed'}] : [],
@@ -357,14 +406,17 @@ export async function managerChat(config: BrainConfig, text: string, sessionKey 
 
   // ── 5. Deterministic fallback (no LLM configured) ──
   const intent = classifyFallback(trimmed, s);
+  let fallbackResult: ManagerResponse;
   switch (intent) {
-    case 'STOP': return doStop(config, s);
-    case 'RESUME': return doResume(config, s);
-    case 'MODE_SWITCH': { s.mode = trimmed.toLowerCase().replace(/[.!?]+$/,'') as ManagerMode; return resp(s, `Modo ${s.mode} ativo.`); }
-    case 'EXECUTION_CONFIRM': return doExecute(config, s);
-    case 'GOAL_CREATION': return doPropose(trimmed, s);
-    default: return fallbackResponse(config, trimmed, s);
+    case 'STOP': fallbackResult = doStop(config, s); break;
+    case 'RESUME': fallbackResult = doResume(config, s); break;
+    case 'MODE_SWITCH': { s.mode = trimmed.toLowerCase().replace(/[.!?]+$/,'') as ManagerMode; fallbackResult = resp(s, `Modo ${s.mode} ativo.`); break; }
+    case 'EXECUTION_CONFIRM': fallbackResult = doExecute(config, s); break;
+    case 'GOAL_CREATION': fallbackResult = doPropose(trimmed, s); break;
+    default: fallbackResult = fallbackResponse(config, trimmed, s); break;
   }
+  persistMessage(config, sessionKey, 'manager', fallbackResult.message, s.mode, s.topic, s.lastBrainResult);
+  return fallbackResult;
 }
 
 function extractTopic(text: string): string {
