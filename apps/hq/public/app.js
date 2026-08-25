@@ -59,11 +59,19 @@ function renderFloor(data){
     h+=`<div class="agent ${cls}" id="agent-${esc(id)}" style="left:${pos.x}px;top:${pos.y-50}px" data-agent="${esc(id)}" title="${esc(ag.name)} — ${esc(stPt(opState))}${ag.operationalReason?' ('+esc(ag.operationalReason)+')':''}"><span class="nametag">${esc(ag.name)}</span><div class="hair" style="background:${hair}"></div><div class="head"></div><div class="body" style="background:${color}"></div><div class="sdot"></div></div>`;
   }
   f.innerHTML=h;
+  // Owner character in meeting room
+  const meetingRoom=data.office.departments.find(d=>d.id==='meeting');
+  if(meetingRoom){
+    const mx=(meetingRoom.area.x+meetingRoom.area.w/2)*CELL-40;
+    const my=(meetingRoom.area.y+meetingRoom.area.h/2)*CELL;
+    f.insertAdjacentHTML('beforeend',`<div class="agent st-available" id="agent-owner" style="left:${mx}px;top:${my-50}px" title="Wesley (Owner)"><span class="nametag">Wesley</span><div class="hair" style="background:#3a5a3a"></div><div class="head"></div><div class="body" style="background:#4a8a5a"></div><div class="sdot" style="background:var(--accent)"></div></div>`);
+  }
+  // Turn on monitors for working agents
   for(const ag of data.agents){
     const opState=ag.operationalState||ag.status;
     if(stCls(opState)==='st-working'){const m=f.querySelector(`[data-mon="${CSS.escape(String(ag.id))}"]`);if(m)m.classList.add('on')}
   }
-  f.querySelectorAll('.agent').forEach(el=>el.addEventListener('click',()=>openProfile(el.dataset.agent)));
+  f.querySelectorAll('.agent').forEach(el=>el.addEventListener('click',()=>{if(el.dataset.agent!=='owner')openProfile(el.dataset.agent)}));
 }
 
 function animateMove(d){
@@ -126,9 +134,35 @@ $('command-input').addEventListener('keydown',e=>{
   if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();$('btn-send').click()}
 });
 
+/* ── MANAGER MEETING MOVEMENT ── */
+let managerOriginalPos=null;
+function managerToMeeting(open){
+  const mgrEl=document.getElementById('agent-manager');
+  if(!mgrEl)return;
+  const floor=$('floor');if(!floor)return;
+  const meetingRoom=state.data?.office?.departments?.find(d=>d.id==='meeting');
+  if(!meetingRoom)return;
+  if(open){
+    if(!managerOriginalPos)managerOriginalPos={left:mgrEl.style.left,top:mgrEl.style.top};
+    const mx=(meetingRoom.area.x+meetingRoom.area.w/2)*CELL+40;
+    const my=(meetingRoom.area.y+meetingRoom.area.h/2)*CELL;
+    mgrEl.classList.add('moving');
+    mgrEl.style.left=mx+'px';mgrEl.style.top=(my-50)+'px';
+    setTimeout(()=>mgrEl.classList.remove('moving'),1200);
+  }else if(managerOriginalPos){
+    mgrEl.classList.add('moving');
+    mgrEl.style.left=managerOriginalPos.left;mgrEl.style.top=managerOriginalPos.top;
+    setTimeout(()=>{mgrEl.classList.remove('moving');managerOriginalPos=null},1200);
+  }
+}
+
 /* ── SIDEBAR ── */
-$('btn-command').addEventListener('click',()=>{$('cmd-sidebar').classList.toggle('open');if($('cmd-sidebar').classList.contains('open'))$('command-input').focus()});
-$('cmd-close').addEventListener('click',()=>$('cmd-sidebar').classList.remove('open'));
+$('btn-command').addEventListener('click',()=>{
+  const isOpen=$('cmd-sidebar').classList.toggle('open');
+  managerToMeeting(isOpen);
+  if(isOpen)$('command-input').focus();
+});
+$('cmd-close').addEventListener('click',()=>{$('cmd-sidebar').classList.remove('open');managerToMeeting(false)});
 $('panel-toggle').addEventListener('click',()=>$('bottom-panels').classList.toggle('collapsed'));
 
 function addMsg(text,who){const b=$('chat-body');const d=document.createElement('div');d.className=`msg ${who==='user'?'user':'mgr'}`;if(who!=='user'){d.innerHTML='<small>Gerente</small>'+esc(text)}else d.textContent=text;b.appendChild(d);b.scrollTop=b.scrollHeight}
