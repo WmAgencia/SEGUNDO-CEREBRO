@@ -187,11 +187,19 @@ export function seedBrainTools(db: DatabaseSync): number {
     { id: "directory_search", description: "Busca profissionais em diretórios especializados (psicólogos, nutricionistas, etc)", category: "web", permissions: ["READ", "NETWORK"], riskLevel: "MEDIUM",
       inputSchema: { type:"object", properties:{ profession:{type:"string"}, location:{type:"string"} }, required:["profession","location"] },
       sideEffects: ["network_request"] },
-    // Image generation for Designer agent
-    { id: "image_generate", description: "Gera imagens via OpenRouter Image API (GPT-Image-1)", category: "image", permissions: ["WRITE", "NETWORK"], riskLevel: "MEDIUM",
-      inputSchema: { type:"object", properties:{ prompt:{type:"string"}, count:{type:"number"} }, required:["prompt"] },
-      sideEffects: ["network_request", "api_cost"] },
+    // Image generation for Designer agent (Pollinations free + OpenRouter fallback)
+    { id: "image_generate", description: "Gera imagens grátis via Pollinations/FLUX (fallback OpenRouter) e arquiva no Google Drive", category: "image", permissions: ["WRITE", "NETWORK"], riskLevel: "MEDIUM",
+      inputSchema: { type:"object", properties:{ prompt:{type:"string"} }, required:["prompt"] },
+      sideEffects: ["network_request"] },
+    // Google Drive archiving for artifacts
+    { id: "drive_upload", description: "Arquiva arquivo no Google Drive (pasta Secom) organizado por categoria/nome/data", category: "storage", permissions: ["WRITE", "NETWORK"], riskLevel: "MEDIUM",
+      inputSchema: { type:"object", properties:{
+        category:{type:"string",description:"Categoria: imagens, campanhas, prospeccoes, relatorios..."},
+        thingName:{type:"string",description:"Nome do projeto/campanha (opcional p/ imagens)"},
+        fileName:{type:"string"}, content:{type:"string"}, mimeType:{type:"string"}
+      }, required:["category","fileName","content","mimeType"] },
+      sideEffects: ["network_request", "external_write"] },
   ];
-  for (const t of brainTools) registerTool(db, { ...t, origin: t.category === "web" || t.category === "image" ? "builtin" : "mcp" });
+  for (const t of brainTools) registerTool(db, { ...t, origin: ["web", "image", "storage"].includes(t.category ?? "") ? "builtin" : "mcp" });
   return brainTools.length;
 }

@@ -1,11 +1,11 @@
 export interface SpecializedAgentDefinition { id: string; name: string; department: string; responsibilities: string[]; permissions: string[]; }
 export const SPECIALIZED_AGENTS: readonly SpecializedAgentDefinition[] = [
   { id: "manager", name: "Gerente", department: "MANAGER / GESTÃO", responsibilities: ["planejamento", "delegação", "avaliação"], permissions: ["context", "orchestration"] },
-  { id: "marketing-agent", name: "Marketing", department: "MARKETING", responsibilities: ["estratégia", "campanhas", "ofertas"], permissions: ["context"] },
-  { id: "designer-agent", name: "Designer", department: "MARKETING", responsibilities: ["briefs", "criativos", "image_generation"], permissions: ["context", "image_generate"] },
+  { id: "marketing-agent", name: "Marketing", department: "MARKETING", responsibilities: ["estratégia", "campanhas", "ofertas"], permissions: ["context", "drive_upload"] },
+  { id: "designer-agent", name: "Designer", department: "MARKETING", responsibilities: ["briefs", "criativos", "image_generation"], permissions: ["context", "image_generate", "drive_upload"] },
   { id: "social-media-agent", name: "Mídias Sociais", department: "MARKETING", responsibilities: ["calendário", "publicação"], permissions: ["context"] },
   { id: "traffic-agent", name: "Tráfego Pago", department: "MARKETING", responsibilities: ["métricas", "orçamento"], permissions: ["context"] },
-  { id: "prospector-agent", name: "Prospector", department: "PROSPECÇÃO", responsibilities: ["qualificação", "pesquisa", "web_search", "google_maps", "linkedin"], permissions: ["context", "web_search", "web_fetch", "google_maps_search", "linkedin_search", "directory_search"] },
+  { id: "prospector-agent", name: "Prospector", department: "PROSPECÇÃO", responsibilities: ["qualificação", "pesquisa", "web_search", "google_maps", "linkedin"], permissions: ["context", "web_search", "web_fetch", "google_maps_search", "linkedin_search", "directory_search", "drive_upload"] },
   { id: "research-agent", name: "Pesquisa", department: "PROSPECÇÃO", responsibilities: ["pesquisa", "síntese", "web_search"], permissions: ["context", "web_search", "web_fetch"] },
   { id: "sales-agent-01", name: "Atendente 1", department: "COMERCIAL", responsibilities: ["atendimento", "follow-up"], permissions: ["context"] },
   { id: "sales-agent-02", name: "Atendente 2", department: "COMERCIAL", responsibilities: ["atendimento", "follow-up"], permissions: ["context"] },

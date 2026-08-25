@@ -1,6 +1,8 @@
 import { DatabaseSync } from "node:sqlite";
+import { archiveArtifact } from "./drive-tools.ts";
 
 export interface ImageGenResult { status: 'GENERATED'|'NOT_CONFIGURED'|'FAILED'; urls: string[]; model: string; error?: string; }
+export interface ImageGenAndArchiveResult extends ImageGenResult { archived?: import("./drive-tools.ts").DriveUploadResult }
 
 /**
  * Generate images via Pollinations.ai — FREE, no API key, no signup.
@@ -44,6 +46,37 @@ export async function generateImage(prompt: string, count = 1): Promise<ImageGen
   if (free.status === 'GENERATED') return free;
   // Fallback to OpenRouter if Pollinations fails
   return generateImageOpenRouter(prompt, count);
+}
+
+function imageFileName(prompt: string, ext = 'png'): string {
+  const stamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14);
+  const slug = prompt.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 50) || 'imagem';
+  return `${stamp}-${slug}.${ext}`;
+}
+
+/**
+ * Generate an image AND archive it to Google Drive (`Secom/imagens/<data>/arquivo.png`).
+ * Returns generation result plus `archived` with the Drive link when configured.
+ */
+export async function generateImageAndArchive(prompt: string): Promise<ImageGenAndArchiveResult> {
+  const result = await generateImage(prompt);
+  if (result.status !== 'GENERATED' || result.urls.length === 0) return result;
+  try {
+    const imgRes = await fetch(result.urls[0]!, { signal: AbortSignal.timeout(60_000) });
+    if (!imgRes.ok) return { ...result, archived: { status: 'FAILED', path: '', error: `download HTTP ${imgRes.status}` } };
+    const contentType = imgRes.headers.get('content-type') ?? 'image/png';
+    const ext = contentType.includes('jpeg') ? 'jpg' : 'png';
+    const buffer = Buffer.from(await imgRes.arrayBuffer());
+    const archived = await archiveArtifact({
+      category: 'imagens',
+      fileName: imageFileName(prompt, ext),
+      content: buffer,
+      mimeType: contentType,
+    });
+    return { ...result, archived };
+  } catch (error) {
+    return { ...result, archived: { status: 'FAILED', path: '', error: error instanceof Error ? error.message : String(error) } };
+  }
 }
 
 /** Register image generation in the model_generations ledger. */
