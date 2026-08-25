@@ -45,6 +45,11 @@ function isIdempotentAddColumn(
   return false;
 }
 
+/** CREATE TABLE IF NOT EXISTS / CREATE INDEX IF NOT EXISTS are safe to run in migrations. */
+function isIdempotentCreate(statement: string): boolean {
+  return /CREATE\s+(TABLE|INDEX)\s+IF\s+NOT\s+EXISTS/i.test(statement);
+}
+
 export function applySchema(db: DatabaseSync): void {
   try {
     db.exec("BEGIN");
@@ -74,7 +79,7 @@ export function applySchema(db: DatabaseSync): void {
           );
         }
         for (const statement of migration.statements) {
-          if (isIdempotentAddColumn(db, statement)) {
+          if (isIdempotentCreate(statement) || isIdempotentAddColumn(db, statement)) {
             db.exec(statement);
           }
         }
