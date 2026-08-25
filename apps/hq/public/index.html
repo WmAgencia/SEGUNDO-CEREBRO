@@ -14,14 +14,15 @@
     <button class="metric"><b>—</b><small>Agentes</small></button>
     <button class="metric"><b>—</b><small>Aprovações</small></button>
   </div>
-  <nav class="tb-actions">
-    <button class="btn ghost mode-btn active" data-mode="plane" id="mode-plane">Plane</button>
-    <button class="btn ghost mode-btn" data-mode="brain" id="mode-brain">Brain</button>
-    <button class="btn ghost mode-btn" data-mode="build" id="mode-build">Build</button>
-    <button class="btn ghost" id="btn-command">💬 Comando</button>
-    <button class="btn danger" id="btn-pause">⏸ Parar</button>
-    <button class="btn success" id="btn-resume">▶ Continuar</button>
-  </nav>
+    <nav class="tb-actions">
+      <button class="btn ghost" id="btn-notifications" title="Notificações">🔔<span class="badge" id="notif-badge" style="display:none">0</span></button>
+      <button class="btn ghost mode-btn active" data-mode="plane" id="mode-plane">Plane</button>
+      <button class="btn ghost mode-btn" data-mode="brain" id="mode-brain">Brain</button>
+      <button class="btn ghost mode-btn" data-mode="build" id="mode-build">Build</button>
+      <button class="btn ghost" id="btn-command">💬 Comando</button>
+      <button class="btn danger" id="btn-pause">⏸ Parar</button>
+      <button class="btn success" id="btn-resume">▶ Continuar</button>
+    </nav>
 </header>
 
 <div class="viewport" id="viewport">
@@ -64,6 +65,22 @@
   <div id="profile-content"><p class="muted">Clique num agente.</p></div>
 </aside>
 
-<div class="toast" id="toast"></div>
-<script src="/config.js"></script><script src="/app.js"></script>
+  <div class="toast" id="toast"></div>
+
+  <!-- Notifications Panel -->
+  <aside class="notif-panel" id="notif-panel">
+    <div class="notif-head"><h3>🔔 Notificações</h3><button class="btn ghost" id="notif-read-all">Marcar todas como lidas</button><button class="close-btn" id="notif-close">✕</button></div>
+    <div class="notif-body" id="notif-body"><p class="muted">Nenhuma notificação.</p></div>
+  </aside>
+
+  <!-- Approval Modal -->
+  <div class="overlay" id="approval-overlay">
+    <div class="modal approval-modal">
+      <div class="modal-head"><h2>⚠️ Aprovação Necessária</h2></div>
+      <div id="approval-body"></div>
+      <div class="cmd-actions"><button class="btn danger" id="approval-reject">❌ Rejeitar</button><button class="btn primary" id="approval-approve">✅ Aprovar</button></div>
+    </div>
+  </div>
+
+  <script src="/config.js"></script><script src="/app.js"></script>
 </body></html>

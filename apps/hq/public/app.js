@@ -197,11 +197,68 @@ $('btn-voice').addEventListener('click',async()=>{
   }catch{$('command-result').textContent='Microfone recusado.'}
 });
 
+/* ── NOTIFICATIONS ── */
+$('btn-notifications').addEventListener('click',()=>{
+  const p=$('notif-panel');p.classList.toggle('open');
+  if(p.classList.contains('open'))loadNotifications();
+});
+$('notif-close').addEventListener('click',()=>$('notif-panel').classList.remove('open'));
+$('notif-read-all').addEventListener('click',async()=>{
+  await fetch(`${API}/api/hq/notifications/read-all`,{method:'POST'});loadNotifications();updateBadge();
+});
+
+async function updateBadge(){
+  try{const r=await(await fetch(`${API}/api/hq/notifications?unread=true`)).json();
+    const badge=$('notif-badge');badge.textContent=r.unread;badge.style.display=r.unread>0?'grid':'none';}catch{}
+}
+
+async function loadNotifications(){
+  try{
+    const r=await(await fetch(`${API}/api/hq/notifications`)).json();
+    const body=$('notif-body');
+    if(!r.notifications.length){body.innerHTML='<p class="muted">Nenhuma notificação.</p>';return}
+    body.innerHTML=r.notifications.map(n=>{
+      const cls=n.requiresAction?'approval':n.read?'':'unread';
+      const actions=n.requiresAction&&n.actionType==='approve_reject'
+        ?`<div class="notif-actions"><button class="btn success" onclick="approveNotification(${n.id})">✅ Aprovar</button><button class="btn danger" onclick="rejectNotification(${n.id})">❌ Rejeitar</button></div>`:'';
+      return `<div class="notif-item ${cls}" onclick="openNotificationChat(${n.id})"><b>${esc(n.title)}</b><small>${esc(n.body.slice(0,150))}</small><small>${new Date(n.createdAt).toLocaleTimeString('pt-BR')}</small>${actions}</div>`;
+    }).join('');
+  }catch{}
+}
+
+async function approveNotification(id){
+  await fetch(`${API}/api/hq/notifications/${id}/read`,{method:'POST'});
+  $('approval-overlay').classList.remove('open');
+  toast('✅ Aprovado');loadNotifications();updateBadge();
+}
+async function rejectNotification(id){
+  await fetch(`${API}/api/hq/notifications/${id}/read`,{method:'POST'});
+  $('approval-overlay').classList.remove('open');
+  toast('❌ Rejeitado');loadNotifications();updateBadge();
+}
+function openNotificationChat(id){
+  fetch(`${API}/api/hq/notifications/${id}/read`,{method:'POST'});
+  $('notif-panel').classList.remove('open');
+  $('cmd-sidebar').classList.add('open');managerToMeeting(true);
+  updateBadge();
+}
+
+// Check for approval-required notifications → show modal
+async function checkApprovals(){
+  try{const r=await(await fetch(`${API}/api/hq/notifications?unread=true`)).json();
+    const approval=r.notifications.find(n=>n.requiresAction&&n.actionType==='approve_reject');
+    if(approval){$('approval-body').innerHTML=`<b>${esc(approval.title)}</b><br><br>${esc(approval.body)}<br><br><small>Task: ${esc(String(approval.taskId))} · Agente: ${esc(approval.agentId||'—')}</small>`;
+      $('approval-overlay').classList.add('open');
+      $('approval-approve').onclick=()=>approveNotification(approval.id);
+      $('approval-reject').onclick=()=>rejectNotification(approval.id);
+    }}catch{}
+}
+
 /* ── SSE ── */
 if(window.EventSource){
   const es=new EventSource(`${API}/api/hq/events`);
-  es.onmessage=msg=>{try{const ev=JSON.parse(msg.data);if(ev.type==='AGENT_MOVE'||ev.type==='HANDOFF_CREATED')animateMove(ev.payload||{})}catch{}refresh()};
+  es.onmessage=msg=>{try{const ev=JSON.parse(msg.data);if(ev.type==='AGENT_MOVE'||ev.type==='HANDOFF_CREATED')animateMove(ev.payload||{})}catch{}refresh();updateBadge();checkApprovals()};
   es.onerror=()=>{$('conn-status').textContent='RECONECTANDO'};
 }
 setTimeout(()=>$('zoom-fit').click(),300);
-setInterval(refresh,30000);refresh();
+setInterval(refresh,30000);setInterval(updateBadge,15000);refresh();updateBadge();checkApprovals();

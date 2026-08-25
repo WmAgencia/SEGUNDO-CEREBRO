@@ -20,6 +20,8 @@ import { getHqSnapshot, executeHqCommand, dispatchInitiative, requestHandoff, ag
 import { recentHqEvents } from "../../core/hq/event-stream.ts";
 import { transcribeAudio } from "../../core/audio/transcription.ts";
 import { executeEngineeringTask } from "../../core/hq/engineering.ts";
+import { listNotifications, unreadCount, markRead, markAllRead, createNotification } from "../../core/hq/notifications.ts";
+import { runInitiativeAutonomously } from "../../core/hq/autonomous-executor.ts";
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.join(root, "public");
@@ -84,6 +86,21 @@ const server = createServer((req, res) => {
   }
   if (req.method === "POST" && url.pathname === "/api/hq/handoff") {
     let body = ""; req.on("data", (chunk) => { body += chunk.toString(); }); req.on("end", () => { try { const input = JSON.parse(body) as { fromAgent?: string; toAgent?: string; summary?: string; taskId?: number; initiativeId?: string }; if (!input.fromAgent || !input.toAgent || !input.summary) throw new Error("fromAgent, toAgent and summary are required"); const result = requestHandoff(config, input as Parameters<typeof requestHandoff>[1]); res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify(result)); } catch (error) { res.writeHead(400, { "Content-Type": "application/json" }); res.end(JSON.stringify({ accepted: false, error: error instanceof Error ? error.message : String(error) })); } }); return;
+  }
+  if (req.method === "GET" && url.pathname === "/api/hq/notifications") {
+    const db = new DatabaseSync(config.dbPath);
+    try { const unreadOnly = url.searchParams.get("unread") === "true"; res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify({ notifications: listNotifications(db, unreadOnly), unread: unreadCount(db) })); } finally { db.close(); } return;
+  }
+  if (req.method === "POST" && url.pathname === "/api/hq/notifications/read-all") {
+    const db = new DatabaseSync(config.dbPath);
+    try { markAllRead(db); res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify({ ok: true })); } finally { db.close(); } return;
+  }
+  if (req.method === "POST" && url.pathname?.startsWith("/api/hq/notifications/") && url.pathname.endsWith("/read")) {
+    const id = Number(url.pathname.split("/")[4]); const db = new DatabaseSync(config.dbPath);
+    try { markRead(db, id); res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify({ ok: true })); } finally { db.close(); } return;
+  }
+  if (req.method === "POST" && url.pathname === "/api/hq/autonomous-run") {
+    let body = ""; req.on("data", (chunk) => { body += chunk.toString(); }); req.on("end", async () => { try { const input = JSON.parse(body) as { initiativeId?: string; workspacePath?: string }; if (!input.initiativeId) throw new Error("initiativeId is required"); const workspace = input.workspacePath ?? path.resolve(process.cwd(), "apps", "nutriva"); const results = await runInitiativeAutonomously(config, input.initiativeId, workspace); res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify({ ok: true, results })); } catch (error) { res.writeHead(500, { "Content-Type": "application/json" }); res.end(JSON.stringify({ ok: false, error: error instanceof Error ? error.message : String(error) })); } }); return;
   }
   const requested = url.pathname === "/" ? "/index.html" : url.pathname;
   const file = path.resolve(publicDir, `.${requested}`); if (!file.startsWith(path.resolve(publicDir)) || !existsSync(file)) { res.writeHead(404); res.end("Not found"); return; }

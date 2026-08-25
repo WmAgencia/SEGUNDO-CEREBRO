@@ -7,6 +7,7 @@ import { OpenCodeRuntime } from "../factory/opencode-runtime.ts";
 import { startTaskWork, submitResult } from "../agents/agent-os.ts";
 import { ProfessionalAgentHarness, nutrivaSandbox } from "../agents/professional-harness.ts";
 import { validateSandbox } from "../agents/professional-harness.ts";
+import { createNotification } from "./notifications.ts";
 
 const execFileAsync = promisify(execFile);
 export interface EngineeringExecution { taskId: number; runId: string; sessionId: number; status: "COMPLETED" | "FAILED"; testsPassed: boolean; typecheckPassed: boolean; output: string; error: string | null; filesChanged: string[]; }
@@ -34,10 +35,12 @@ export async function executeEngineeringTask(config: BrainConfig, input: { taskI
     if (passed) {
       submitResult(resultDb, config, { taskId: input.taskId, agentId: input.agentId, sessionId, summary: "OpenCode + testes + typecheck avaliados", output: session.output, artifacts: session.filesChanged, sources: ["opencode", "npm test", "npm run typecheck"] });
       currentHarness.recordEval(run.id, "engineering_checks", "PASS", "OpenCode, testes e typecheck passaram", ["exit_code=0"]); currentHarness.move(run.id, "COMPLETED");
+      createNotification(resultDb, { type:'task_completed', title:`✅ Tarefa concluída: ${input.taskId}`, body:session.output.slice(0,300), agentId:input.agentId, taskId:input.taskId });
     } else {
       resultDb.prepare("UPDATE initiative_tasks SET status='FAILED',result=?,evidence=?,completed_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'),updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?").run(session.error ?? "engineering checks failed", JSON.stringify({ opencode: session.status, testsPassed: checks.testsPassed, typecheckPassed: checks.typecheckPassed }), input.taskId);
       resultDb.prepare("INSERT INTO events (event_type,subject,payload) VALUES ('task_failed',?,?)").run(input.agentId, JSON.stringify({ taskId: input.taskId, reason: "independent evaluator failed" }));
       currentHarness.recordEval(run.id, "engineering_checks", "FAIL", "Independent checks failed", [session.status, String(checks.testsPassed), String(checks.typecheckPassed)]); currentHarness.move(run.id, "REWORKING");
+      createNotification(resultDb, { type:'task_failed', title:`❌ Tarefa falhou: ${input.taskId}`, body:(session.error??'Erro').slice(0,300), agentId:input.agentId, taskId:input.taskId });
     }
     return { taskId: input.taskId, runId: run.id, sessionId, status: passed ? "COMPLETED" : "FAILED", testsPassed: checks.testsPassed, typecheckPassed: checks.typecheckPassed, output: session.output, error: session.error, filesChanged: session.filesChanged };
   } finally { resultDb.close(); }

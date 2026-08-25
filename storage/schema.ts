@@ -1,4 +1,4 @@
-export const SCHEMA_VERSION = 14;
+export const SCHEMA_VERSION = 15;
 
 export interface Migration {
   from: number;
@@ -646,6 +646,21 @@ export const SCHEMA_STATEMENTS: readonly string[] = [
      cost REAL, latency_ms INTEGER, fallback_from TEXT, error TEXT,
      created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
    )`,
+  `CREATE TABLE IF NOT EXISTS hq_notifications (
+     id INTEGER PRIMARY KEY AUTOINCREMENT,
+     type TEXT NOT NULL DEFAULT 'info',
+     title TEXT NOT NULL,
+     body TEXT NOT NULL DEFAULT '',
+     agent_id TEXT,
+     task_id INTEGER,
+     goal_id TEXT,
+     requires_action INTEGER NOT NULL DEFAULT 0,
+     action_type TEXT,
+     action_payload TEXT NOT NULL DEFAULT '{}',
+     read INTEGER NOT NULL DEFAULT 0,
+     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+     read_at TEXT
+   )`,
 ];
 
 export interface Migration {
@@ -751,4 +766,5 @@ export const MIGRATIONS: readonly Migration[] = [
       "ALTER TABLE skills ADD COLUMN provenance_json TEXT NOT NULL DEFAULT '{}'",
     ],
   },
+  { from: 14, statements: [] },
 ];

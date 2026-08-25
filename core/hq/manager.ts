@@ -6,6 +6,7 @@ import { refreshQueue, assignTask } from "../agents/agent-os.ts";
 import { setKillSwitch } from "../autonomous/cycle.ts";
 import { buildWorldState } from "../agents/world-state.ts";
 import { persistGoalKnowledge, persistInitiativeKnowledge } from "../obsidian/knowledge-records.ts";
+import { createNotification } from "./notifications.ts";
 import { completeWithGateway } from "../ai/model-router.ts";
 import { getAllAgentStates } from "./agent-state.ts";
 
@@ -413,6 +414,14 @@ function executeRealPlan(config: BrainConfig, s: ManagerSession): ManagerRespons
     const ready = refreshQueue(db, init.id);
     if (ready[0]!==undefined) assignTask(db, ready[0], { agentId:'engineering-agent', reason:'Manager delegou primeira task do plano conversacional' });
     persistInitiativeKnowledge(config, goal, init, finalTasks);
+
+    // Notify owner that tasks were created and dispatched
+    createNotification(db, {
+      type: 'info',
+      title: `📋 Plano criado: ${goalName}`,
+      body: `${finalTasks.length} tarefas criadas. Primeira task dispatchada para Engineering Agent.`,
+      goalId: goal.id,
+    });
 
     return { type:'execution', mode:s.mode,
       message:`Plano executado. Criei o objetivo "${goalName}" com ${finalTasks.length} tarefas:\n${finalTasks.map((t,i)=>`${i+1}. ${t}`).join('\n')}\n\nA primeira tarefa foi dispatchada para o Engineering Agent. Acompanhe o progresso no escritório.`,
