@@ -187,10 +187,13 @@ Regras:
 - NUNCA responda com templates genéricos como "quer que eu analise mais a fundo?" quando você já tem dados para responder.`;
 
 async function callLLM(config: BrainConfig, s: ManagerSession, userMessage: string): Promise<string | null> {
-  const context = buildSystemContext(config, s);
+  let context = buildSystemContext(config, s);
+  // Free-tier models cap prompt tokens (~11k). Clamp the context so the call never 402s.
+  const MAX_CONTEXT_CHARS = 9000;
+  if (context.length > MAX_CONTEXT_CHARS) context = context.slice(0, MAX_CONTEXT_CHARS) + "\n…(contexto truncado)";
   const messages = [
     { role: 'system' as const, content: `${SYSTEM_PROMPT}\n\n--- CONTEXTO ATUAL DO SISTEMA ---\n${context}\n--- FIM DO CONTEXTO ---` },
-    ...s.history.slice(-10).map(h => ({ role: h.role === 'user' ? 'user' as const : 'assistant' as const, content: h.text })),
+    ...s.history.slice(-6).map(h => ({ role: h.role === 'user' ? 'user' as const : 'assistant' as const, content: h.text.slice(0, 400) })),
     { role: 'user' as const, content: userMessage },
   ];
   try {

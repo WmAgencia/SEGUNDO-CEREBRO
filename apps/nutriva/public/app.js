@@ -1,4 +1,5 @@
-﻿/* â”€â”€ Nutriva App â”€â”€ */
+/* â”€â”€ Nutriva App â”€â”€ */
+const BASE = window.location.pathname.replace(/\/[^\/]*$/, '');
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 let toastTimer;
@@ -9,7 +10,7 @@ const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 const TOKEN_KEY = "nutriva_token";
 function authHeaders() { const t = localStorage.getItem(TOKEN_KEY); return t ? { Authorization: `Bearer ${t}` } : {}; }
 async function api(path, opts = {}) {
-  const r = await fetch("/api" + path, { headers: { "Content-Type": "application/json", ...authHeaders() }, ...opts });
+  const r = await fetch(BASE + "/api" + path, { headers: { "Content-Type": "application/json", ...authHeaders() }, ...opts });
   if (r.status === 401) { showLogin(); throw new Error("sessÃ£o expirada â€” faÃ§a login novamente"); }
   if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "HTTP " + r.status);
   return r.json();
@@ -20,7 +21,7 @@ $("btn-login").addEventListener("click", doLogin);
 $("login-password").addEventListener("keydown", (e) => { if (e.key === "Enter") doLogin(); });
 async function doLogin() {
   try {
-    const res = await fetch("/api/auth/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: $("login-email").value.trim(), password: $("login-password").value }) });
+    const res = await fetch(BASE + "/api/auth/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: $("login-email").value.trim(), password: $("login-password").value }) });
     if (!res.ok) { toast("âŒ " + ((await res.json()).error ?? "credenciais invÃ¡lidas")); return; }
     const { token } = await res.json();
     localStorage.setItem(TOKEN_KEY, token);
