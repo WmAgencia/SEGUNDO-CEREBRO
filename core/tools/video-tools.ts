@@ -15,8 +15,12 @@ export interface VideoGenResult {
   error?: string;
 }
 
-/** Cheapest first: silent drafts, then free-tier audio model. */
-const VIDEO_MODELS = ["wan-fast", "nova-reel", "seedance-2.0-mini"];
+/** Cheap/free-tier candidates first, with each model's minimum supported duration. */
+const VIDEO_MODELS: Array<{ name: string; minDuration: number }> = [
+  { name: "wan-fast", minDuration: 5 },
+  { name: "nova-reel", minDuration: 6 },
+  { name: "seedance-2.0-mini", minDuration: 5 },
+];
 
 async function tryModel(model: string, prompt: string, durationSec: number): Promise<VideoGenResult | null> {
   try {
@@ -39,14 +43,17 @@ async function tryModel(model: string, prompt: string, durationSec: number): Pro
   }
 }
 
-export async function generateVideo(prompt: string, durationSec = 5): Promise<VideoGenResult> {
+export async function generateVideo(prompt: string, durationSec?: number): Promise<VideoGenResult> {
   if (!process.env.POLLINATIONS_API_KEY) return { status: "NOT_CONFIGURED", model: "none", error: "POLLINATIONS_API_KEY not configured" };
-  for (const model of VIDEO_MODELS) {
-    const result = await tryModel(model, prompt, durationSec);
+  let lastError = "";
+  for (const { name, minDuration } of VIDEO_MODELS) {
+    const duration = Math.max(durationSec ?? minDuration, minDuration);
+    const result = await tryModel(name, prompt, duration);
     if (result === null) continue;
     if (result.status === "GENERATED") return result;
+    lastError = result.error ?? "";
   }
-  return { status: "FAILED", model: VIDEO_MODELS.join(","), error: "nenhum modelo de video disponivel com o saldo atual" };
+  return { status: "FAILED", model: VIDEO_MODELS.map((m) => m.name).join(","), error: lastError || "nenhum modelo de video disponivel com o saldo atual" };
 }
 
 function videoFileName(prompt: string): string {
