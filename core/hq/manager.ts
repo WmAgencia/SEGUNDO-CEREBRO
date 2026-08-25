@@ -6,10 +6,11 @@ import { refreshQueue, assignTask } from "../agents/agent-os.ts";
 import { setKillSwitch } from "../autonomous/cycle.ts";
 import { buildWorldState } from "../agents/world-state.ts";
 import { persistGoalKnowledge, persistInitiativeKnowledge } from "../obsidian/knowledge-records.ts";
+import { completeWithGateway } from "../ai/model-router.ts";
 import { getAllAgentStates } from "./agent-state.ts";
 
 export type ManagerMode = 'plane' | 'brain' | 'build';
-export type ManagerIntent = 'CHAT'|'QUESTION'|'IDEA'|'GOAL_CREATION'|'EXECUTION_CONFIRM'|'STOP'|'RESUME'|'STATUS'|'DIAGNOSIS'|'MODE_SWITCH';
+export type ManagerIntent = 'CHAT'|'QUESTION'|'IDEA'|'GOAL_CREATION'|'EXECUTION_CONFIRM'|'STOP'|'RESUME'|'STATUS'|'DIAGNOSIS'|'MODE_SWITCH'|'BRAIN_QUERY'|'IMAGE_REQUEST';
 
 export interface ManagerResponse {
   type: 'conversation'|'plan'|'execution'|'status'|'brain';
@@ -31,32 +32,261 @@ interface ManagerSession {
   pending: PendingPlan|null;
   history: Array<{ role: 'user'|'manager'; text: string }>;
   topic: string|null;
+  lastBrainResult: string|null;
+  lastPlanSummary: string|null;
 }
 
 const sessions = new Map<string, ManagerSession>();
 function getSession(key: string): ManagerSession {
-  if (!sessions.has(key)) sessions.set(key, { mode:'plane', pending:null, history:[], topic:null });
+  if (!sessions.has(key)) sessions.set(key, { mode:'plane', pending:null, history:[], topic:null, lastBrainResult:null, lastPlanSummary:null });
   return sessions.get(key)!;
 }
 
-function classify(text: string, session: ManagerSession): ManagerIntent {
+/* ── CONTEXT ASSEMBLY ── */
+
+function buildSystemContext(config: BrainConfig, s: ManagerSession): string {
+  const db = new DatabaseSync(config.dbPath);
+  try {
+    const parts: string[] = [];
+
+    // Active goals
+    const goals = db.prepare("SELECT name,type,target,current_value,status FROM goals WHERE status='ACTIVE' ORDER BY updated_at DESC LIMIT 5").all() as unknown as Array<{name:string;type:string;target:number|null;current_value:number|null;status:string}>;
+    if (goals.length) parts.push(`Objetivos ativos: ${goals.map(g=>`"${g.name}"${g.target?` (meta: ${g.target})`:''}`).join('; ')}`);
+
+    // Recent tasks
+    const tasks = db.prepare("SELECT title,status,assigned_agent FROM initiative_tasks WHERE status NOT IN ('COMPLETED','CANCELLED') ORDER BY id DESC LIMIT 8").all() as unknown as Array<{title:string;status:string;assigned_agent:string|null}>;
+    if (tasks.length) parts.push(`Tarefas abertas: ${tasks.map(t=>`"${t.title}" (${t.status}, ${t.assigned_agent||'sem agente'})`).join('; ')}`);
+
+    // Agent states
+    const states = getAllAgentStates(db);
+    const summary = states.map(a=>`${a.agentId}=${a.state}`).join(', ');
+    parts.push(`Agentes: ${summary}`);
+
+    // Recent completed work
+    const done = db.prepare("SELECT title FROM initiative_tasks WHERE status='COMPLETED' ORDER BY completed_at DESC LIMIT 5").all() as unknown as Array<{title:string}>;
+    if (done.length) parts.push(`Recentemente concluído: ${done.map(d=>`"${d.title}"`).join('; ')}`);
+
+    // Relevant memories via FTS (if topic is set)
+    if (s.topic) {
+      try {
+        const mems = db.prepare("SELECT content FROM memories_fts WHERE memories_fts MATCH ? LIMIT 5").all(`"${s.topic}"`) as unknown as Array<{content:string}>;
+        if (mems.length) parts.push(`Contexto do Second Brain sobre "${s.topic}":\n${mems.map(m=>`- ${m.content.slice(0,150)}`).join('\n')}`);
+      } catch {}
+    }
+
+    // Conversation topic and pending state
+    if (s.topic) parts.push(`Tópico atual da conversa: ${s.topic}`);
+    if (s.pending) parts.push(`PLANO PENDENTE DE CONFIRMAÇÃO: "${s.pending.goalName}" com ${s.pending.tasks.length} tarefas.`);
+    if (s.lastBrainResult) parts.push(`Última consulta ao Brain: ${s.lastBrainResult.slice(0,300)}`);
+
+    // World state
+    try { const w = buildWorldState(config); parts.push(`Sistema: ${w.counts['goals']??0} goals, ${w.activeRuns.length} runs ativos, ${w.blockedRuns.length} bloqueados.`); } catch {}
+
+    // Conversation history (last 6 messages)
+    const recent = s.history.slice(-6);
+    if (recent.length > 1) {
+      parts.push(`Histórico recente:\n${recent.map(h=>`${h.role==='user'?'Usuário':'Gerente'}: ${h.text.slice(0,200)}`).join('\n')}`);
+    }
+
+    return parts.join('\n\n');
+  } finally { db.close(); }
+}
+
+/* ── LLM CALL ── */
+
+const SYSTEM_PROMPT = `Você é o Gerente do Second Brain OS, um sistema operacional empresarial multiagente.
+
+Sua função:
+- Conversar naturalmente com o dono (Wesley) em português brasileiro.
+- Entender o que ele quer, mesmo quando usa pronomes ("isso", "aquilo", "ele") ou comandos curtos ("aprofunda", "continue", "faz").
+- Consultar o contexto fornecido abaixo para dar respostas baseadas em dados REAIS.
+- Quando o usuário pedir informações sobre projetos, tarefas ou agentes, use os dados do contexto.
+- Quando o usuário tiver uma ideia, ajude a estruturá-la.
+- Quando o usuário quiser criar um objetivo, proponha um plano e peça confirmação.
+- NUNCA invente dados que não estão no contexto.
+- Se o contexto não tiver a informação, diga que não encontrou e ofereça buscar.
+
+Regras:
+- Seja direto e natural, como um gerente de verdade.
+- Não repita informações que já deu na conversa.
+- Se o usuário disser "aprofunde", expanda a resposta anterior com mais detalhes do contexto.
+- Se o usuário disser "e o que falta?", liste o que ainda não foi feito.
+- Se o usuário disser "transforma isso em plano", proponha um plano estruturado.
+- Se o usuário confirmar ("pode", "sim", "executa"), confirme que vai executar.
+- NUNCA responda com templates genéricos como "quer que eu analise mais a fundo?" quando você já tem dados para responder.`;
+
+async function callLLM(config: BrainConfig, s: ManagerSession, userMessage: string): Promise<string | null> {
+  const context = buildSystemContext(config, s);
+  const messages = [
+    { role: 'system' as const, content: `${SYSTEM_PROMPT}\n\n--- CONTEXTO ATUAL DO SISTEMA ---\n${context}\n--- FIM DO CONTEXTO ---` },
+    ...s.history.slice(-10).map(h => ({ role: h.role === 'user' ? 'user' as const : 'assistant' as const, content: h.text })),
+    { role: 'user' as const, content: userMessage },
+  ];
+  try {
+    const result = await completeWithGateway(null, { messages, maxTokens: 800, temperature: 0.3 }, { workload: 'reasoning', agent: 'manager', task: userMessage });
+    return result.content;
+  } catch { return null; }
+}
+
+/* ── DETERMINISTIC FALLBACK (no LLM) ── */
+
+function fallbackResponse(config: BrainConfig, text: string, s: ManagerSession): ManagerResponse {
   const t = text.trim().toLowerCase().replace(/[.!?]+$/,'');
-  if (/^(pare tudo|para tudo|kill switch|stop)$/i.test(t)) return 'STOP';
+  const db = new DatabaseSync(config.dbPath);
+
+  try {
+    // Greetings
+    if (/^(oi|olá|ola|hey|e aí|eai|bom dia|boa tarde|boa noite)\b/i.test(t))
+      return resp(s, 'Olá! Sou o Gerente. Posso conversar sobre estratégia, criar objetivos, consultar o Second Brain e coordenar os agentes. Sobre o que quer falar?');
+
+    if (/(tudo bem|tudo certo|como vai)/i.test(t))
+      return resp(s, 'Tudo funcionando. Tenho acesso ao banco de dados, aos agentes e ao Second Brain. O que você quer fazer?');
+
+    if (/^(ei|oie|eai|hey|opa)\b/i.test(t))
+      return resp(s, 'Oi! O que você precisa?');
+
+    // Follow-up: aprofundar
+    if (/(aprofund|expand|detalh|mais sobre)/i.test(t) && s.lastBrainResult)
+      return resp(s, `Aprofundando sobre ${s.topic ?? 'o tópico'}:\n\n${s.lastBrainResult.slice(0,600)}\n\nQuer que eu transforme isso em um plano?`);
+
+    // Follow-up: "e o que falta?"
+    if (/(o que falta|o que falta fazer|próximos passos|o que ainda)/i.test(t)) {
+      if (s.topic) {
+        const tasks = db.prepare("SELECT title,status FROM initiative_tasks WHERE status NOT IN ('COMPLETED','CANCELLED') ORDER BY id DESC LIMIT 10").all() as unknown as Array<{title:string;status:string}>;
+        if (tasks.length) return resp(s, `O que ainda está em aberto:\n${tasks.map(t=>`• ${t.title} (${t.status})`).join('\n')}`);
+      }
+      const w = buildWorldState(config);
+      return resp(s, `Tarefas abertas: ${w.counts['initiative_tasks'] ?? 0}. Runs ativos: ${w.activeRuns.length}. Quer detalhes?`);
+    }
+
+    // Follow-up: "o que está pronto?"
+    if (/(o que está pronto|o que já foi|o que temos|o que existe)/i.test(t)) {
+      const topic = s.topic;
+      if (topic) {
+        const done = db.prepare("SELECT title FROM initiative_tasks WHERE status='COMPLETED' ORDER BY completed_at DESC LIMIT 8").all() as unknown as Array<{title:string}>;
+        const mems = db.prepare("SELECT content FROM memories_fts WHERE memories_fts MATCH ? LIMIT 5").all(`"${topic}"`) as unknown as Array<{content:string}>;
+        const parts: string[] = [];
+        if (done.length) parts.push(`Concluído:\n${done.map(d=>`✅ ${d.title}`).join('\n')}`);
+        if (mems.length) parts.push(`Contexto do Second Brain:\n${mems.map(m=>`• ${m.content.slice(0,150)}`).join('\n')}`);
+        if (parts.length) return resp(s, `Sobre ${topic}:\n\n${parts.join('\n\n')}\n\nQuer que eu aprofunde ou transforme em plano?`);
+      }
+    }
+
+    // Follow-up: "e o marketing?" / "e o comercial?"
+    const deptMatch = t.match(/e (o|a) (marketing|comercial|prospec|desenvolv|manuten)/i);
+    if (deptMatch) {
+      const dept = deptMatch[2] ?? '';
+      const agents = db.prepare("SELECT id,status FROM agents WHERE domains LIKE ? OR id LIKE ?").all(`%${dept}%`, `%${dept}%`) as unknown as Array<{id:string;status:string}>;
+      if (agents.length) return resp(s, `Sobre ${dept}:\n${agents.map(a=>`• ${a.id}: ${a.status}`).join('\n')}`);
+    }
+
+    // Nutriva query
+    if (/(nutriva)/i.test(t)) {
+      s.topic = 'nutriva';
+      const done = db.prepare("SELECT title FROM initiative_tasks WHERE status='COMPLETED' ORDER BY completed_at DESC LIMIT 10").all() as unknown as Array<{title:string}>;
+      const mems = db.prepare("SELECT content FROM memories_fts WHERE memories_fts MATCH 'nutriva' LIMIT 5").all() as unknown as Array<{content:string}>;
+      const parts: string[] = [];
+      if (done.length) parts.push(`Concluído:\n${done.map(d=>`✅ ${d.title}`).join('\n')}`);
+      if (mems.length) parts.push(`Contexto:\n${mems.map(m=>`• ${m.content.slice(0,150)}`).join('\n')}`);
+      const result = parts.length ? parts.join('\n\n') : 'Nutriva tem nutrition engine, banco de alimentos, patient CRUD e tenant isolation. Ainda faltam frontend completo, substitution engine, PDF e recipe engine.';
+      s.lastBrainResult = result;
+      return resp(s, result);
+    }
+
+    // Prospecção
+    if (/(prospec|prospecção|leads)/i.test(t)) {
+      s.topic = 'prospecção';
+      return resp(s, 'Sobre prospecção — temos o Prospector e o time Comercial. Podemos aumentar volume de leads, melhorar qualificação, ou os dois. Qual direção te interessa?');
+    }
+
+    // Idea / discussion
+    if (/(pensando|ideia|que tal|e se|imagina|talvez)/i.test(t)) {
+      s.topic = text.slice(0, 50);
+      return resp(s, 'Boa ideia. Posso consultar o Second Brain para ver o que já temos e montar uma estratégia. Quer que eu aprofunde ou transforme em objetivo?');
+    }
+
+    // Image request
+    if (/(faz|crie|gere|gerar)\s+(uma?\s+)?(imagem|foto|desenho)/i.test(t))
+      return resp(s, 'Consigo preparar a geração, mas nenhum provider de imagem está configurado no momento. Configure OPENROUTER_API_KEY ou um provider de imagem para habilitar essa capacidade.');
+
+    // Pending confirmation
+    if (s.pending && /^(sim|pode|executa|manda ver|vai|confirmo|go)\b/i.test(t)) return doExecute(config, s);
+    if (s.pending && /^(não|nao|deixa|depois|cancela)\b/i.test(t)) {
+      s.pending = null;
+      return resp(s, 'Plano cancelado. Podemos conversar sobre outra coisa.');
+    }
+
+    // Goal creation
+    if (/(quero|precisamos|preciso)\s+(de\s+)?(faturar|alcançar|vender|criar)\s+/i.test(t) || /r\$\s*[\d.,]+/i.test(t)) {
+      const plan = extractPlan(text);
+      s.pending = plan;
+      const target = plan.target ? `R$${plan.target.toLocaleString('pt-BR')}` : '';
+      return { type:'plan', mode:s.mode, message:`Entendi. Vou criar o objetivo "${plan.goalName}"${target?` (${target})`:''} com ${plan.tasks.length} tarefas:\n\n${plan.tasks.map((t,i)=>`${i+1}. ${t}`).join('\n')}\n\nPosso criar e distribuir?`, intent:'GOAL_CREATION', actions:[{type:'create_goal',status:'proposed'}], requiresConfirmation:true };
+    }
+
+    // Status
+    if (/(status|progresso|situação|como estamos|como está|prioridade)/i.test(t)) {
+      const w = buildWorldState(config);
+      return { type:'status', mode:s.mode, message:`${w.counts['goals']??0} goals, ${w.counts['initiative_tasks']??0} tarefas, ${w.activeRuns.length} runs ativos.`, intent:'STATUS', actions:[], requiresConfirmation:false };
+    }
+
+    // STOP/RESUME
+    if (/^(pare tudo|para tudo|kill)/i.test(t)) return doStop(config, s);
+    if (/^(continue|retomar|resume)$/i.test(t)) return doResume(config, s);
+
+    // Generic follow-up with topic context
+    if (s.topic) return resp(s, `Sobre ${s.topic} — quer que eu aprofunde, transforme em plano, ou consulte o Second Brain para mais detalhes?`);
+
+    // Last resort
+    return resp(s, 'Entendi. Posso ajudar de forma mais específica se você me disser o que quer fazer: criar um objetivo, consultar um projeto, conversar sobre estratégia ou verificar o status do sistema.');
+  } finally { db.close(); }
+}
+
+function resp(s: ManagerSession, message: string): ManagerResponse {
+  s.history.push({ role:'manager', text:message });
+  return { type:'conversation', mode:s.mode, message, intent:'CHAT', actions:[], requiresConfirmation:false };
+}
+
+/* ── MAIN ENTRY ── */
+
+export async function managerChat(config: BrainConfig, text: string, sessionKey = 'default'): Promise<ManagerResponse> {
+  const trimmed = text.trim();
+  if (!trimmed) return { type:'conversation', mode:'plane', message:'Digite algo.', intent:'CHAT', actions:[], requiresConfirmation:false };
+
+  const s = getSession(sessionKey);
+  s.history.push({ role:'user', text:trimmed });
+  if (s.history.length > 100) s.history.shift();
+
+  // Try LLM first (OpenRouter when configured)
+  const llmResponse = await callLLM(config, s, trimmed);
+  if (llmResponse && llmResponse.trim()) {
+    s.history.push({ role:'manager', text:llmResponse });
+    // Detect mode switch from LLM response
+    if (/modo brain/i.test(llmResponse)) s.mode = 'brain';
+    if (/modo build/i.test(llmResponse)) s.mode = 'build';
+    if (/modo plane/i.test(llmResponse)) s.mode = 'plane';
+    return { type:'conversation', mode:s.mode, message:llmResponse, intent:'CHAT', actions:[], requiresConfirmation:false };
+  }
+
+  // Deterministic fallback (no LLM configured)
+  const intent = classifyFallback(trimmed, s);
+  switch (intent) {
+    case 'STOP': return doStop(config, s);
+    case 'RESUME': return doResume(config, s);
+    case 'MODE_SWITCH': { s.mode = trimmed.toLowerCase().replace(/[.!?]+$/,'') as ManagerMode; return resp(s, `Modo ${s.mode} ativo.`); }
+    case 'EXECUTION_CONFIRM': return doExecute(config, s);
+    case 'GOAL_CREATION': return doPropose(trimmed, s);
+    default: return fallbackResponse(config, trimmed, s);
+  }
+}
+
+function classifyFallback(text: string, s: ManagerSession): ManagerIntent {
+  const t = text.trim().toLowerCase().replace(/[.!?]+$/,'');
+  if (/^(pare tudo|para tudo|kill)/i.test(t)) return 'STOP';
   if (/^(continue|retomar|resume)$/i.test(t)) return 'RESUME';
   if (/^(plane|brain|build)$/i.test(t)) return 'MODE_SWITCH';
-  if (session.pending && /^(pode|executa|sim|confirmo|vai|manda ver|aprovado|go)\b/i.test(t)) return 'EXECUTION_CONFIRM';
-  // Greetings before question detection
-  if (/^(oi|olá|ola|hey|e aí|eai|bom dia|boa tarde|boa noite)\b/i.test(t)) return 'CHAT';
-  if (/(tudo bem|tudo certo|como você está|como vc tá|como vai|você está bem)/i.test(t)) return 'CHAT';
-  if (/(você consegue|consegue me ajudar|pode me ajudar|pode ajudar)/i.test(t)) return 'CHAT';
-  if (/(quero|precisamos|preciso)\s+(de\s+)?(faturar|alcançar|vender|ganhar|criar)\s+/i.test(t)) return 'GOAL_CREATION';
-  if (/r\$\s*[\d.,]+/i.test(t) && /(faturar|vender|alcançar|meta|objetivo)/i.test(t)) return 'GOAL_CREATION';
-  if (/(qual|como)\s+(é?\s+)?(a\s+|o\s+)?(nossa\s+)?(prioridade|status|progresso|situação)/i.test(t)) return 'STATUS';
-  if (/(o que está|o que tá)\s+(acontecendo|rolando)/i.test(t)) return 'STATUS';
-  if (/^(qual|quais|como|quando|onde|por que|quem)\b/i.test(t)) return 'QUESTION';
-  if (/\?$/.test(text.trim())) return 'QUESTION';
-  if (/(estou pensando|tô pensando|ideia|que tal|e se|talvez|imagina)/i.test(t)) return 'IDEA';
-  if (/(aumentar|melhorar)\s+(vendas|prospec|comercial|leads|qualidade)/i.test(t)) return 'IDEA';
+  if (s.pending && /^(pode|executa|sim|vai|manda ver|go)\b/i.test(t)) return 'EXECUTION_CONFIRM';
+  if (/(quero|precisamos|preciso)\s+(de\s+)?(faturar|alcançar|vender|criar)\s+/i.test(t) || /r\$\s*[\d.,]+/i.test(t)) return 'GOAL_CREATION';
   return 'CHAT';
 }
 
@@ -76,134 +306,12 @@ function extractPlan(text: string): PendingPlan {
   return { goalName:name, goalType:isCommercial?'FINANCIAL':'PROJECT', target, tasks, project:isNutriva?'nutriva':isCommercial?'consecom':undefined };
 }
 
-function getCtx(config: BrainConfig): string {
-  try { const w = buildWorldState(config); return `${w.counts['goals']??0} goals, ${w.activeRuns.length} runs ativos`; } catch { return ''; }
-}
-
-export function managerChat(config: BrainConfig, text: string, sessionKey = 'default'): ManagerResponse {
-  const trimmed = text.trim();
-  if (!trimmed) return { type:'conversation', mode:'plane', message:'Digite algo.', intent:'CHAT', actions:[], requiresConfirmation:false };
-  const s = getSession(sessionKey);
-  s.history.push({ role:'user', text:trimmed });
-  if (s.history.length > 100) s.history.shift();
-  const intent = classify(trimmed, s);
-
-  switch (intent) {
-    case 'STOP': return doStop(config, s);
-    case 'RESUME': return doResume(config, s);
-    case 'MODE_SWITCH': return doModeSwitch(trimmed, s);
-    case 'EXECUTION_CONFIRM': return doExecute(config, s);
-    case 'GOAL_CREATION': return doPropose(trimmed, s);
-    case 'STATUS': return doStatus(config, s);
-    case 'QUESTION': return doQuestion(trimmed, config, s);
-    case 'IDEA': return doIdea(trimmed, config, s);
-    default: return doChat(trimmed, config, s);
-  }
-}
-
-function doChat(text: string, config: BrainConfig, s: ManagerSession): ManagerResponse {
-  const t = text.toLowerCase();
-  if (/^(oi|olá|ola|hey|e aí|eai|bom dia|boa tarde|boa noite)\b/i.test(t))
-    return { type:'conversation', mode:s.mode, message:'Oi, Wesley. Sou o Gerente do Second Brain. Posso conversar sobre estratégia, criar objetivos, distribuir tarefas e acompanhar execução. Sobre o que você quer falar?', intent:'CHAT', actions:[], requiresConfirmation:false };
-  if (/(tudo bem|tudo certo|como vai|como você está)/i.test(t))
-    return { type:'conversation', mode:s.mode, message:'Tudo funcionando por aqui. Tenho acesso ao banco, aos agentes e ao contexto. O que você quer atacar?', intent:'CHAT', actions:[], requiresConfirmation:false };
-  if (/(você consegue|consegue me ajudar|pode me ajudar|pode ajudar|como funciona)/i.test(t))
-    return { type:'conversation', mode:s.mode, message:'Consigo te ajudar a planejar objetivos, distribuir tarefas, consultar o Second Brain e acompanhar execução. Quando tivermos um plano, eu peço sua confirmação antes de executar. Sobre o que quer conversar?', intent:'CHAT', actions:[], requiresConfirmation:false };
-  if (/(obrigado|valeu|show|legal|bacana|ótimo|otimo|perfeito)/i.test(t))
-    return { type:'conversation', mode:s.mode, message:'Disponha. Estou aqui quando precisar.', intent:'CHAT', actions:[], requiresConfirmation:false };
-  if (/(prospec|prospecção|prospection|prospectar)/i.test(t)) {
-    s.topic = 'prospecção';
-    return { type:'conversation', mode:s.mode, message:'Sobre prospecção — temos o Prospector e o Comercial trabalhando nisso. Podemos focar em aumentar volume de leads, melhorar a qualificação, ou os dois. Qual direção te interessa mais?', intent:'CHAT', actions:[], requiresConfirmation:false };
-  }
-  if (/(qualidade|qualificar|qualificação)/i.test(t) && s.topic === 'prospecção')
-    return { type:'conversation', mode:s.mode, message:'Entendi, foco em qualidade. O Prospector pode filtrar melhor os leads antes de passar para o Comercial. Posso criar um objetivo para melhorar o processo de qualificação. Quer que eu monte um plano?', intent:'CHAT', actions:[], requiresConfirmation:false };
-  if (/(volume|quantidade|mais leads)/i.test(t) && s.topic === 'prospecção')
-    return { type:'conversation', mode:s.mode, message:'Aumentar volume faz sentido. Podemos ampliar as fontes de prospecção e acelerar o pipeline. Quer que eu monte um objetivo com tarefas para o Prospector?', intent:'CHAT', actions:[], requiresConfirmation:false };
-  if (/(campanha|campanhas)/i.test(t)) {
-    s.topic = 'campanhas';
-    return { type:'conversation', mode:s.mode, message:'Posso analisar campanhas anteriores no Second Brain e montar uma estratégia. Você tem em mente algum público ou canal específico?', intent:'CHAT', actions:[], requiresConfirmation:false };
-  }
-  if (/(vendas|vender|faturar|receita|receita)/i.test(t) && !s.pending) {
-    s.topic = 'vendas';
-    return { type:'conversation', mode:s.mode, message:'Sobre vendas — podemos atacar por prospecção, marketing ou melhorar a conversão do comercial. Qual dessas frentes você quer priorizar?', intent:'CHAT', actions:[], requiresConfirmation:false };
-  }
-  if (/(não|nao|deixa|depois|ainda não)/i.test(t) && s.pending)
-    return { type:'conversation', mode:s.mode, message:'Sem problema. O plano fica guardado — quando quiser executar, é só dizer "pode executar".', intent:'CHAT', actions:[], requiresConfirmation:false };
-
-  // Context-aware follow-up using topic
-  if (s.topic) {
-    return { type:'conversation', mode:s.mode, message:`Sobre ${s.topic} — quer que eu aprofunde a análise ou transforme em um objetivo acionável?`, intent:'CHAT', actions:[], requiresConfirmation:false };
-  }
-  return { type:'conversation', mode:s.mode, message:'Entendi. Quer que eu analise mais a fundo ou transforme em algo acionável? Posso também consultar o Second Brain se quiser contexto específico.', intent:'CHAT', actions:[], requiresConfirmation:false };
-}
-
-function doIdea(text: string, config: BrainConfig, s: ManagerSession): ManagerResponse {
-  s.topic = text.slice(0, 60);
-  return { type:'conversation', mode:s.mode, message:'Boa. Posso consultar o Second Brain para ver o que já temos sobre isso e montar uma estratégia. Quer que eu aprofunde a análise ou já transforme em um objetivo com plano de ação?', intent:'IDEA', actions:[], requiresConfirmation:false };
-}
-
-function doQuestion(text: string, config: BrainConfig, s: ManagerSession): ManagerResponse {
-  const t = text.toLowerCase();
-  if (s.mode === 'brain') return brainQuery(text, config, s);
-  if (/(vyntra|nutriva|consecom)/i.test(t)) {
-    const proj = t.match(/(vyntra|nutriva|consecom)/i)?.[1] ?? 'projeto';
-    s.topic = proj;
-    return { type:'conversation', mode:s.mode, message:`Tenho contexto sobre ${proj} no Second Brain. Posso puxar goals, tasks ou histórico específico. O que você quer saber?`, intent:'QUESTION', actions:[], requiresConfirmation:false };
-  }
-  if (/(prioridade|prioridade atual|mais importante)/i.test(t)) {
-    const ctx = getCtx(config);
-    return { type:'status', mode:s.mode, message:`Contexto atual: ${ctx}. Quer que eu detalhe por projeto ou por agente?`, intent:'STATUS', actions:[], requiresConfirmation:false };
-  }
-  if (/(situação|situação atual)/i.test(t)) {
-    const ctx = getCtx(config);
-    return { type:'status', mode:s.mode, message:`Situação: ${ctx}. Posso detalhar o que cada agente está fazendo se quiser.`, intent:'STATUS', actions:[], requiresConfirmation:false };
-  }
-  return { type:'conversation', mode:s.mode, message:'Boa pergunta. Posso consultar o Second Brain para te responder com precisão. O que especificamente você quer saber?', intent:'QUESTION', actions:[], requiresConfirmation:false };
-}
-
-function brainQuery(text: string, config: BrainConfig, s: ManagerSession): ManagerResponse {
-  const db = new DatabaseSync(config.dbPath);
-  try {
-    const terms = text.toLowerCase().match(/[\p{L}\p{N}]{3,}/gu)?.slice(0, 5) ?? [];
-    let results: string[] = [];
-    for (const term of terms) {
-      const mems = db.prepare("SELECT content FROM memories_fts WHERE memories_fts MATCH ? LIMIT 3").all(`"${term}"`) as unknown as Array<{ content: string }>;
-      results.push(...mems.map(m => m.content.slice(0, 120)));
-      if (results.length >= 5) break;
-    }
-    const goals = db.prepare("SELECT name,status FROM goals WHERE status='ACTIVE' LIMIT 5").all() as unknown as Array<{name:string;status:string}>;
-    const goalStr = goals.map(g => g.name).join(', ');
-    if (results.length === 0 && goals.length === 0)
-      return { type:'brain', mode:s.mode, message:'Consultei o Second Brain mas não encontrei contexto relevante para essa consulta. Quer que eu procure por outro termo?', intent:'QUESTION', actions:[], requiresConfirmation:false };
-    const ctx = results.length ? `\n\nContexto encontrado:\n${results.slice(0,3).map(r=>`• ${r}`).join('\n')}` : '';
-    const goalCtx = goals.length ? `\n\nObjetivos ativos: ${goalStr}` : '';
-    return { type:'brain', mode:s.mode, message:`Consultei o Second Brain.${ctx}${goalCtx}`, intent:'QUESTION', actions:[], requiresConfirmation:false };
-  } finally { db.close(); }
-}
-
-function doStatus(config: BrainConfig, s: ManagerSession): ManagerResponse {
-  const db = new DatabaseSync(config.dbPath);
-  try {
-    const states = getAllAgentStates(db);
-    const working = states.filter(a=>a.state==='WORKING').length;
-    const available = states.filter(a=>a.state==='AVAILABLE').length;
-    const blocked = states.filter(a=>['BLOCKED','AWAITING_APPROVAL'].includes(a.state)).length;
-    const ctx = getCtx(config);
-    return { type:'status', mode:s.mode,
-      message:`${ctx}. Agentes: ${working} trabalhando, ${available} disponíveis, ${blocked} bloqueados/aguardando.`,
-      intent:'STATUS', actions:[], requiresConfirmation:false,
-      contextCards:[{label:'Trabalhando',value:String(working)},{label:'Disponíveis',value:String(available)},{label:'Bloqueados',value:String(blocked)}] };
-  } finally { db.close(); }
-}
-
 function doPropose(text: string, s: ManagerSession): ManagerResponse {
   const plan = extractPlan(text);
   s.pending = plan; s.topic = plan.goalName;
   const tasks = plan.tasks.map((t,i)=>`${i+1}. ${t}`).join('\n');
   const target = plan.target ? `R$${plan.target.toLocaleString('pt-BR')}` : '';
-  return { type:'plan', mode:s.mode,
-    message:`Entendi. Vou criar o objetivo "${plan.goalName}"${target?` (${target})`:''} e montar um plano:\n\n${tasks}\n\nPosso criar e distribuir as tarefas?`,
-    intent:'GOAL_CREATION', actions:[{type:'create_goal',status:'proposed'}], requiresConfirmation:true };
+  return { type:'plan', mode:s.mode, message:`Entendi. Vou criar o objetivo "${plan.goalName}"${target?` (${target})`:''} e montar um plano:\n\n${tasks}\n\nPosso criar e distribuir as tarefas?`, intent:'GOAL_CREATION', actions:[{type:'create_goal',status:'proposed'}], requiresConfirmation:true };
 }
 
 function doExecute(config: BrainConfig, s: ManagerSession): ManagerResponse {
@@ -221,10 +329,8 @@ function doExecute(config: BrainConfig, s: ManagerSession): ManagerResponse {
     const ready = refreshQueue(db, init.id);
     if (ready[0]!==undefined) assignTask(db, ready[0], { agentId:'manager', reason:'Manager delegou primeira task' });
     persistInitiativeKnowledge(config, goal, init, plan.tasks);
-    s.pending = null;
-    return { type:'execution', mode:s.mode,
-      message:`Objetivo "${plan.goalName}" criado com ${plan.tasks.length} tarefas. Primeira task dispatchada. Tudo registrado no Obsidian.`,
-      intent:'GOAL_CREATION', actions:[{type:'create_goal',status:'executed',detail:goal.id},{type:'create_initiative',status:'executed',detail:init.id}], requiresConfirmation:false };
+    s.pending = null; s.lastPlanSummary = plan.goalName;
+    return { type:'execution', mode:s.mode, message:`Objetivo "${plan.goalName}" criado com ${plan.tasks.length} tarefas. Primeira task dispatchada. Tudo registrado no Obsidian.`, intent:'GOAL_CREATION', actions:[{type:'create_goal',status:'executed',detail:goal.id},{type:'create_initiative',status:'executed',detail:init.id}], requiresConfirmation:false };
   } finally { db.close(); }
 }
 
@@ -243,15 +349,4 @@ function doResume(config: BrainConfig, s: ManagerSession): ManagerResponse {
     const r = db.prepare("UPDATE agent_runs SET kill_switch=0,state='READY' WHERE kill_switch=1 AND state='PAUSED'").run();
     return { type:'execution', mode:s.mode, message:`Operações retomadas (${r.changes} runs recuperados).`, intent:'RESUME', actions:[{type:'resume',status:'executed'}], requiresConfirmation:false };
   } finally { db.close(); }
-}
-
-function doModeSwitch(text: string, s: ManagerSession): ManagerResponse {
-  const mode = text.trim().toLowerCase().replace(/[.!?]+$/,'') as ManagerMode;
-  s.mode = mode;
-  const descriptions: Record<ManagerMode,string> = {
-    plane:'Modo Plane ativo. Posso conversar, analisar, planejar e propor estratégias. Não executo nada sem sua confirmação.',
-    brain:'Modo Brain ativo. Vou consultar o Second Brain e o contexto antes de responder.',
-    build:'Modo Build ativo. Pronto para executar tarefas de engenharia via OpenCode.',
-  };
-  return { type:'conversation', mode, message:descriptions[mode], intent:'MODE_SWITCH', actions:[], requiresConfirmation:false };
 }

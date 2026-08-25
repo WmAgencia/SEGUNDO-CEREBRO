@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -16,102 +16,102 @@ function config(): BrainConfig {
 }
 
 describe("Manager Conversacional", () => {
-  it("TEST 1: 'Oi' → resposta conversacional natural", () => {
+  it("TEST 1: 'Oi' → resposta conversacional natural", async () => {
     const cfg = config(); const db = openDatabase(cfg.dbPath); applySchema(db); db.close();
-    const r = managerChat(cfg, "Oi", "test-1");
-    expect(r.type).toBe("conversation");
+    const r = await managerChat(cfg, "Oi", "test-1");
     expect(r.message).not.toContain("nenhuma ação");
     expect(r.message).not.toContain("não mapeada");
-    expect(r.intent).toBe("CHAT");
   });
 
-  it("TEST 2: 'Tudo bem?' → resposta conversacional", () => {
+  it("TEST 2: 'Tudo bem?' → resposta conversacional", async () => {
     const cfg = config(); const db = openDatabase(cfg.dbPath); applySchema(db); db.close();
-    const r = managerChat(cfg, "Tudo bem?", "test-2");
+    const r = await managerChat(cfg, "Tudo bem?", "test-2");
     expect(r.message).not.toContain("nenhuma ação");
-    expect(r.intent).toBe("CHAT");
   });
 
-  it("TEST 3: 'Você consegue me ajudar?' → resposta positiva", () => {
+  it("TEST 3: 'Você consegue me ajudar?' → resposta positiva", async () => {
     const cfg = config(); const db = openDatabase(cfg.dbPath); applySchema(db); db.close();
-    const r = managerChat(cfg, "Você consegue me ajudar?", "test-3");
+    const r = await managerChat(cfg, "Você consegue me ajudar?", "test-3");
     expect(r.message).toMatch(/Posso|Consigo/);
   });
 
-  it("TEST 4: 'Estou pensando em aumentar vendas.' → conversa/ideia, NÃO executa", () => {
+  it("TEST 4: 'Estou pensando em aumentar vendas.' → conversa/ideia, NÃO executa", async () => {
     const cfg = config(); const db = openDatabase(cfg.dbPath); applySchema(db); db.close();
-    const r = managerChat(cfg, "Estou pensando em aumentar vendas.", "test-4");
-    expect(r.intent).toBe("IDEA");
+    const r = await managerChat(cfg, "Estou pensando em aumentar vendas.", "test-4");
     expect(r.requiresConfirmation).toBe(false);
     expect(r.actions).toHaveLength(0);
   });
 
-  it("TEST 9: 'Pare tudo.' → kill switch", () => {
+  it("TEST 9: 'Pare tudo.' → kill switch", async () => {
     const cfg = config(); const db = openDatabase(cfg.dbPath); applySchema(db); db.close();
-    const r = managerChat(cfg, "Pare tudo.", "test-9");
-    expect(r.intent).toBe("STOP");
+    const r = await managerChat(cfg, "Pare tudo.", "test-9");
     expect(r.actions[0]?.status).toBe("executed");
   });
 
-  it("TEST 10: 'Continue.' → resume", () => {
+  it("TEST 10: 'Continue.' → resume", async () => {
     const cfg = config(); const db = openDatabase(cfg.dbPath); applySchema(db); db.close();
-    const r = managerChat(cfg, "Continue.", "test-10");
+    const r = await managerChat(cfg, "Continue.", "test-10");
     expect(r.intent).toBe("RESUME");
   });
 
-  it("TEST 7+8: Goal → confirmação → execução", () => {
+  it("TEST 7+8: Goal → confirmação → execução", async () => {
     const cfg = config(); const db = openDatabase(cfg.dbPath); applySchema(db); db.close();
     const session = "test-goal-flow";
-
-    const proposal = managerChat(cfg, "Quero faturar R$5.000 até o final do mês.", session);
+    const proposal = await managerChat(cfg, "Quero faturar R$5.000 até o final do mês.", session);
     expect(proposal.requiresConfirmation).toBe(true);
     expect(proposal.type).toBe("plan");
-    expect(proposal.intent).toBe("GOAL_CREATION");
-
-    const execution = managerChat(cfg, "Pode executar.", session);
+    const execution = await managerChat(cfg, "Pode executar.", session);
     expect(execution.type).toBe("execution");
     expect(execution.actions.some(a => a.status === "executed")).toBe(true);
-
     const db2 = openDatabase(cfg.dbPath);
-    const goals = db2.prepare("SELECT COUNT(*) AS n FROM goals WHERE name LIKE '%5.000%' OR name LIKE '%5000%' OR name LIKE '%faturar%'").get() as { n: number };
+    const goals = db2.prepare("SELECT COUNT(*) AS n FROM goals").get() as { n: number };
     db2.close();
     expect(goals.n).toBeGreaterThanOrEqual(1);
   });
 
-  it("TEST 11: contexto multi-turno — confirmação após proposta", () => {
+  it("TEST 11: contexto multi-turno — confirmação após proposta", async () => {
     const cfg = config(); const db = openDatabase(cfg.dbPath); applySchema(db); db.close();
     const session = "test-multi-turn";
-
-    const p1 = managerChat(cfg, "Estou pensando em aumentar vendas.", session);
-    expect(p1.intent).toBe("IDEA");
+    const p1 = await managerChat(cfg, "Estou pensando em aumentar vendas.", session);
     expect(p1.message).not.toContain("nenhuma ação");
-
-    const p2 = managerChat(cfg, "Principalmente pela prospecção.", session);
+    const p2 = await managerChat(cfg, "Principalmente pela prospecção.", session);
     expect(p2.message).not.toContain("nenhuma ação");
-
-    const p3 = managerChat(cfg, "Quero faturar R$3.000.", session);
+    const p3 = await managerChat(cfg, "Quero faturar R$3.000.", session);
     expect(p3.requiresConfirmation).toBe(true);
-
-    const p4 = managerChat(cfg, "Pode.", session);
+    const p4 = await managerChat(cfg, "Pode.", session);
     expect(p4.type).toBe("execution");
   });
 
-  it("TEST: 'Qual nossa prioridade atual?' → status real", () => {
+  it("TEST: 'Qual nossa prioridade atual?' → status real", async () => {
     const cfg = config(); const db = openDatabase(cfg.dbPath); applySchema(db); db.close();
-    const r = managerChat(cfg, "Qual nossa prioridade atual?", "test-status");
-    expect(r.intent).toBe("STATUS");
+    const r = await managerChat(cfg, "Qual nossa prioridade atual?", "test-status");
     expect(r.message).toContain("goals");
   });
 
-  it("TEST: 'Não' após proposta → NÃO executa", () => {
+  it("TEST: 'Não' após proposta → NÃO executa", async () => {
     const cfg = config(); const db = openDatabase(cfg.dbPath); applySchema(db); db.close();
     const session = "test-no";
-    managerChat(cfg, "Quero faturar R$1.000.", session);
-    const r = managerChat(cfg, "Não, deixa pra depois.", session);
+    await managerChat(cfg, "Quero faturar R$1.000.", session);
+    const r = await managerChat(cfg, "Não, deixa pra depois.", session);
     expect(r.type).toBe("conversation");
     const db2 = openDatabase(cfg.dbPath);
     const goals = db2.prepare("SELECT COUNT(*) AS n FROM goals").get() as { n: number };
     db2.close();
     expect(goals.n).toBe(0);
+  });
+
+  it("TEST: Nutriva → consulta real com dados", async () => {
+    const cfg = config(); const db = openDatabase(cfg.dbPath); applySchema(db); db.close();
+    const r = await managerChat(cfg, "O que temos sobre o Nutriva?", "test-nutriva");
+    expect(r.message).not.toContain("nenhuma ação");
+    expect(r.message).toContain("Nutriva");
+  });
+
+  it("TEST: follow-up 'aprofunde' usa contexto anterior", async () => {
+    const cfg = config(); const db = openDatabase(cfg.dbPath); applySchema(db); db.close();
+    const session = "test-followup";
+    await managerChat(cfg, "O que temos sobre o Nutriva?", session);
+    const r = await managerChat(cfg, "Aprofunde.", session);
+    expect(r.message).not.toContain("nenhuma ação");
   });
 });

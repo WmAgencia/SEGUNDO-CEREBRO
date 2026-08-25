@@ -81,8 +81,8 @@ const COMMERCIAL_PLAN = [
   "Consolidar resultados",
 ];
 
-export function executeHqCommand(config: BrainConfig, text: string, sessionKey = 'default'): HqCommandResult & { type?: string; intent?: string; actions?: Array<{type:string;status:string}>; requiresConfirmation?: boolean } {
-  const response = managerChat(config, text, sessionKey);
+export async function executeHqCommand(config: BrainConfig, text: string, sessionKey = 'default'): Promise<HqCommandResult & { type?: string; intent?: string; actions?: Array<{type:string;status:string}>; requiresConfirmation?: boolean }> {
+  const response = await managerChat(config, text, sessionKey);
   return {
     ok: true,
     message: response.message,

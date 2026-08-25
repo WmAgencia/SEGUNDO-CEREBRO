@@ -16,13 +16,13 @@ function config(): BrainConfig {
 }
 
 describe("Second Brain HQ integration", () => {
-  it("consome estado real e cria goal com confirmação", () => {
+  it("consome estado real e cria goal com confirmação", async () => {
     const cfg = config(); const db = openDatabase(cfg.dbPath); applySchema(db); db.close();
     const snapshot = getHqSnapshot(cfg);
     expect(snapshot.office.departments.length).toBeGreaterThanOrEqual(6);
     expect(snapshot.agents.find((a) => String(a.id) === "manager")).toBeTruthy();
     expect(snapshot.office.bounds.w).toBeGreaterThan(0);
-    const result = executeHqCommand(cfg, "Quero criar um objetivo de desenvolvimento do Nutriva.", "hq-test");
+    const result = await executeHqCommand(cfg, "Quero criar um objetivo de desenvolvimento do Nutriva.", "hq-test");
     expect(result.ok).toBe(true);
     expect(result.requiresConfirmation ?? result.type === "plan").toBeTruthy();
   });
