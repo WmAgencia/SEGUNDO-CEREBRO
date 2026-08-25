@@ -47,7 +47,7 @@ export const OFFICE_DEPARTMENTS: readonly DepartmentArea[] = [
       'sales-agent-01': d(9, 7.5), 'sales-agent-02': d(11.5, 7.5),
       'sales-agent-03': d(14, 7.5), 'sales-agent-04': d(16.5, 7.5),
     },
-    decor: [dec('plant', 8.5, 6.5), dec('whiteboard', 13, 6.5), dec('plant', 20.5, 6.5), dec('plant', 8.5, 9.5), dec('bookshelf', 19, 9.5)],
+    decor: [dec('computer', 12.5, 9.4), dec('plant', 8.5, 6.5), dec('whiteboard', 13, 6.5), dec('plant', 20.5, 6.5), dec('plant', 8.5, 9.5), dec('bookshelf', 19, 9.5)],
     door: { side: 'top', offset: .5 },
   },
   {

@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { initNutrivaSchema, ensureDefaultTenant } from "./db/nutriva-schema.ts";
 import { seedFoods, searchFoods } from "./db/foods.ts";
 import { calculatePlan, calculateRecipe, findSubstitutions, type MealInput } from "./services/plans.ts";
+import { authenticate, ensureMasterUser, verifyToken, MASTER_EMAIL } from "./services/auth.ts";
 import { persistFullPlan, getFullPlan } from "./db/plans-db.ts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -15,6 +16,7 @@ export const db = new DatabaseSync(dbPath);
 initNutrivaSchema(db);
 ensureDefaultTenant(db);
 seedFoods(db);
+ensureMasterUser(db);
 
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -55,6 +57,23 @@ export async function handleNutrivaRequest(req: IncomingMessage, res: ServerResp
   const url = new URL(req.url ?? "", "http://localhost");
   const route = pathname ?? url.pathname;
   const method = req.method ?? "GET";
+
+  if (method === "POST" && route === "/api/auth/login") {
+    const b = await readBody(req);
+    const result = authenticate(db, String(b.email ?? ""), String(b.password ?? ""));
+    if (!result) { json(res, 401, { error: "email ou senha invalidos" }); return; }
+    json(res, 200, result);
+    return;
+  }
+
+  // Mutations require a valid session (GETs remain open for the demo UI)
+  if (method !== "GET" && route.startsWith("/api/") && route !== "/api/auth/login") {
+    const auth = req.headers.authorization ?? "";
+    if (!verifyToken(auth.replace(/^Bearer /i, ""))) {
+      json(res, 401, { error: "nao autenticado", loginUrl: "/?login=1" });
+      return;
+    }
+  }
 
   if (method === "GET" && (route === "/health" || route === "/api/health")) {
     json(res, 200, { status: "ok", product: "nutriva", version: "0.2.0", engines: ["plans", "substitutions", "recipes"] });

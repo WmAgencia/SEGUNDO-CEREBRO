@@ -63,7 +63,80 @@ const server = createServer((req, res) => {
     return;
   }
   if (req.method === "GET" && (url.pathname === "/health" || url.pathname === "/api/hq/health")) { res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify(checkHealth())); return; }
+  if (req.method === "GET" && url.pathname.startsWith("/api/hq/agent/") && url.pathname.endsWith("/logs")) {
+    const agentId = decodeURIComponent(url.pathname.split("/")[4] ?? "");
+    let db: DatabaseSync | undefined;
+    try {
+      db = new DatabaseSync(config.dbPath);
+      const rows = db.prepare("SELECT stage, message, created_at FROM agent_task_logs WHERE agent_id = ? ORDER BY id DESC LIMIT 60").all(agentId);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: true, agentId, logs: rows.reverse() }));
+    } catch (error) { res.writeHead(500, { "Content-Type": "application/json" }); res.end(JSON.stringify({ ok: false, error: String(error) })); }
+    finally { db?.close(); }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/hq/agents/rename") {
+    let body = ""; req.on("data", (c) => { body += c.toString(); }); req.on("end", () => {
+      try {
+        const input = JSON.parse(body) as { id?: string; name?: string };
+        if (!input.id || !input.name?.trim()) throw new Error("id e name obrigatorios");
+        const db = new DatabaseSync(config.dbPath);
+        try { db.prepare("UPDATE agents SET name = ? WHERE id = ?").run(input.name.trim().slice(0, 40), input.id); } finally { db.close(); }
+        res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify({ ok: true, id: input.id, name: input.name.trim() }));
+      } catch (error) { res.writeHead(400, { "Content-Type": "application/json" }); res.end(JSON.stringify({ ok: false, error: error instanceof Error ? error.message : String(error) })); }
+    }); return;
+  }
+
   if (req.method === "GET" && url.pathname === "/api/hq/state") { res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify(getHqSnapshot(config))); return; }
+
+  // ── WhatsApp multi-instance proxy (Evolution API) ──
+  if (url.pathname.startsWith("/api/whatsapp/")) {
+    void (async () => {
+      const wa = (p: string, init?: RequestInit) => fetch(`${process.env.EVOLUTION_API_URL}${p}`, {
+        ...init,
+        headers: { apikey: process.env.EVOLUTION_API_KEY ?? "", "Content-Type": "application/json", ...(init?.headers ?? {}) },
+        signal: AbortSignal.timeout(60_000),
+      });
+      const send = (status: number, data: unknown) => { res.writeHead(status, { "Content-Type": "application/json" }); res.end(JSON.stringify(data)); };
+      try {
+        if (!process.env.EVOLUTION_API_URL) return send(503, { error: "EVOLUTION_API_URL não configurada" });
+        const sub = url.pathname.slice("/api/whatsapp".length);
+        if (req.method === "GET" && sub === "/instances") {
+          const r = await wa("/instance/fetchInstances");
+          const raw = await r.json();
+          const list = (Array.isArray(raw) ? raw : []).map((i: { name?: string; instanceName?: string; state?: string; connectionStatus?: string }) => ({ name: i.name ?? i.instanceName ?? "?", state: i.state ?? i.connectionStatus ?? "unknown" }));
+          return send(200, { instances: list });
+        }
+        let body = "";
+        req.on("data", (c: Buffer) => { body += c.toString(); });
+        await new Promise<void>((resolve) => req.on("end", () => resolve()));
+        const input = body ? (JSON.parse(body) as Record<string, unknown>) : {};
+        if (req.method === "POST" && sub === "/create") {
+          const existing = await (await wa("/instance/fetchInstances")).json() as Array<{ name?: string; instanceName?: string }>;
+          const names = new Set(existing.map((i) => i.name ?? i.instanceName));
+          let n = 1; while (names.has(`whatsapp-${n}`)) n++;
+          const name = typeof input.name === "string" && input.name.trim() ? input.name.trim().replace(/\s+/g, "-") : `whatsapp-${n}`;
+          await wa("/instance/create", { method: "POST", body: JSON.stringify({ instanceName: name }) });
+          const conn = await wa(`/instance/connect/${name}`);
+          const connData = (await conn.json()) as Record<string, unknown>;
+          return send(201, { name, ...connData });
+        }
+        const connectMatch = sub.match(/^\/connect\/(.+)$/);
+        if (req.method === "GET" && connectMatch) {
+          const r = await wa(`/instance/connect/${connectMatch[1]}`);
+          return send(r.status, await r.json());
+        }
+        const stateMatch = sub.match(/^\/state\/(.+)$/);
+        if (req.method === "GET" && stateMatch) {
+          const r = await wa(`/instance/connectionState/${stateMatch[1]}`);
+          return send(r.status, await r.json());
+        }
+        send(404, { error: "rota whatsapp desconhecida" });
+      } catch (error) { send(500, { error: error instanceof Error ? error.message : String(error) }); }
+    })();
+    return;
+  }
   if (req.method === "GET" && url.pathname === "/api/hq/events") {
     res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" });
     let lastId = Number(url.searchParams.get("after") ?? "0");

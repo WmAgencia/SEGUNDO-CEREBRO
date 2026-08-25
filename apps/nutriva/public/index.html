@@ -8,7 +8,20 @@
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='80' font-size='80'>🌿</text></svg>">
 </head>
 <body>
-<div class="shell">
+<!-- LOGIN GATE -->
+<div class="overlay open" id="login-overlay">
+  <div class="modal" style="width:min(400px,92vw)">
+    <div style="text-align:center;margin-bottom:18px"><span style="font-size:38px">🌿</span><h2 style="margin-top:6px">Nutriva</h2><p class="muted-sm">central da nutricionista</p></div>
+    <label>E-mail<input id="login-email" placeholder="master@nutriva.com" autocomplete="username"></label>
+    <label style="margin-top:10px">Senha<input id="login-password" type="password" placeholder="••••••••" autocomplete="current-password"></label>
+    <button class="btn primary block" id="btn-login" style="margin-top:16px">Entrar</button>
+    <div class="muted-sm" style="text-align:center;margin-top:14px;line-height:1.7">
+      Acesso pronto:<br><b>master@nutriva.com</b> · senha <b>nutriva123</b>
+    </div>
+  </div>
+</div>
+
+<div class="shell" id="app-shell" style="display:none">
   <aside class="sidebar">
     <div class="brand"><span class="brand-leaf">🌿</span><div><b>Nutriva</b><small>central da nutricionista</small></div></div>
     <nav id="nav">
@@ -18,7 +31,7 @@
       <button data-page="substituicoes" class="nav-item">Substituições</button>
       <button data-page="receitas" class="nav-item">Receitas</button>
     </nav>
-    <div class="sidebar-foot">v0.2 · determinístico primeiro</div>
+    <div class="sidebar-foot"><button class="remove-x" id="btn-logout" title="Sair">⏻ sair</button> · v0.3 determinístico</div>
   </aside>
 
   <main class="main">

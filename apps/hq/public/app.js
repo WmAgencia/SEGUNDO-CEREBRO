@@ -27,6 +27,7 @@ function renderDecor(decor){return decor.map(d=>{
   const x=d.x,y=d.y;
   switch(d.type){
     case'plant':return`<div class="decor plant" style="left:${x-8}px;top:${y-12}px"></div>`;
+    case'computer':return`<div class="decor wa-computer" style="left:${x-16}px;top:${y-11}px" title="Conexões WhatsApp — clique para abrir" data-wa-computer="1"><span></span></div>`;
     case'bookshelf':return`<div class="decor bookshelf" style="left:${x-14}px;top:${y-18}px"><span></span></div>`;
     case'whiteboard':return`<div class="decor whiteboard" style="left:${x-24}px;top:${y-15}px"></div>`;
     case'server-rack':return`<div class="decor server-rack" style="left:${x-11}px;top:${y-20}px"></div>`;
@@ -101,20 +102,43 @@ async function refresh(){
   catch{$('conn-status').textContent='OFFLINE';$('conn-status').className='offline';$('pulse').style.background='var(--red)'}
 }
 
+let liveLogTimer=null,liveLogAgent=null;
+function stopLiveLog(){if(liveLogTimer){clearInterval(liveLogTimer);liveLogTimer=null}liveLogAgent=null}
+async function refreshLiveLog(){
+  if(!liveLogAgent)return;
+  try{const r=await(await fetch(`${API}/api/hq/agent/${encodeURIComponent(liveLogAgent)}/logs`)).json();
+    const el=$('agent-live-log');if(!el)return;
+    el.innerHTML=(r.logs??[]).map(l=>`<div class="log-line"><span class="log-ts">${esc(l.created_at.slice(11,19))}</span><span class="log-stage st-${esc(l.stage)}">${esc(l.stage)}</span> ${esc(l.message)}</div>`).join('')||'<p class="muted">Sem atividades registradas ainda.</p>';
+    el.scrollTop=el.scrollHeight;
+  }catch{}
+}
+const AGENT_ROLES={'engineering-agent':'Agente Desenvolvedor — constrói sites e sistemas','designer-agent':'Agente Designer — cria imagens e vídeos','marketing-agent':'Agente Marketing — estratégia e campanhas','prospector-agent':'Agente Prospector — busca clientes no mercado','research-agent':'Agente Pesquisa — investiga e sintetiza informações','social-media-agent':'Agente Mídias Sociais — calendário e publicação','traffic-agent':'Agente Tráfego Pago — métricas e orçamento de anúncios','sales-agent-01':'Agente Atendente 1 — atendimento e follow-up','sales-agent-02':'Agente Atendente 2 — atendimento e follow-up','sales-agent-03':'Agente Atendente 3 — atendimento e follow-up','sales-agent-04':'Agente Atendente 4 — atendimento e follow-up','maintenance-agent':'Agente Manutenção — limpeza e saúde do sistema','manager':'Gerente — planejamento, delegação e avaliação'};
+
 async function openProfile(aid){
   $('profile-panel').classList.add('open');$('profile-content').innerHTML='<p class="muted">Carregando…</p>';
   try{
     const p=await(await fetch(`${API}/api/hq/agent/${encodeURIComponent(aid)}`)).json();
     if(!p?.agent){$('profile-content').innerHTML='<p class="muted">Não encontrado.</p>';return}
     let dm=[];try{dm=JSON.parse(p.agent.domains??'[]')}catch{}
+    const role=AGENT_ROLES[aid]||esc(p.department||dm.join(', ')||'—');
     $('profile-content').innerHTML=`
-      <div class="p-sec"><h4>${esc(p.agent.name)}</h4><p class="muted">${esc(p.department||dm.join(', ')||'—')}</p><p style="margin-top:4px;font-size:13px">${esc(stPt(p.agent.status))}</p></div>
+      <div class="p-sec"><h4>${esc(p.agent.name)}</h4><p class="p-role">${esc(role)}</p><p style="margin-top:4px;font-size:13px">${esc(stPt(p.agent.status))}</p></div>
       <div class="p-sec"><h4>Tarefas</h4>${(p.tasks??[]).map(t=>`<div class="p-item"><b>${esc(t.title)}</b><small>${esc(stPt(t.status))}</small></div>`).join('')||'<p class="muted">Nenhuma.</p>'}</div>
       <div class="p-sec"><h4>Handoffs</h4>${(p.handoffs??[]).map(h=>`<div class="p-item">${esc(h.from_agent)} → ${esc(h.to_agent)}<small>${esc(h.summary.slice(0,50))}</small></div>`).join('')||'<p class="muted">Nenhum.</p>'}</div>
       <div class="p-sec"><h4>Runs</h4>${(p.runs??[]).map(r=>`<div class="p-item">${esc(r.id.slice(0,22))}<small>${esc(r.state)}</small></div>`).join('')||'<p class="muted">Nenhum.</p>'}</div>`;
+    // Log ao vivo + rename
+    $('agent-live-log-wrap').style.display='block';
+    $('agent-rename-wrap').style.display='block';
+    $('agent-rename-input').value=p.agent.name;
+    $('agent-rename-save').onclick=async()=>{
+      const name=$('agent-rename-input').value.trim();if(!name)return;
+      const r=await fetch(`${API}/api/hq/agents/rename`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:aid,name})});
+      if(r.ok){toast('✏️ Agente renomeado para '+name);openProfile(aid);refresh()}else toast('❌ Falha ao renomear');
+    };
+    stopLiveLog();liveLogAgent=aid;refreshLiveLog();liveLogTimer=setInterval(refreshLiveLog,2000);
   }catch{$('profile-content').innerHTML='<p class="muted">Erro.</p>'}
 }
-$('profile-close').addEventListener('click',()=>$('profile-panel').classList.remove('open'));
+$('profile-close').addEventListener('click',()=>{$('profile-panel').classList.remove('open');stopLiveLog()});
 
 /* ── MODES ── */
 let currentMode='plane';
@@ -254,6 +278,54 @@ async function checkApprovals(){
       $('approval-reject').onclick=()=>rejectNotification(approval.id);
     }}catch{}
 }
+
+/* ── WhatsApp connections popup ── */
+let waPollTimer=null;
+function findDataUrl(obj,depth=0){
+  if(depth>6||obj==null)return null;
+  if(typeof obj==='string')return obj.startsWith('data:image')?obj:null;
+  if(Array.isArray(obj)){for(const v of obj){const r=findDataUrl(v,depth+1);if(r)return r}return null}
+  if(typeof obj==='object'){for(const v of Object.values(obj)){const r=findDataUrl(v,depth+1);if(r)return r}return null}
+  return null;
+}
+async function fetchQr(name){
+  try{const j=await(await fetch(`${API}/api/whatsapp/connect/${encodeURIComponent(name)}`)).json();return findDataUrl(j)}catch{return null}
+}
+async function waLoad(){
+  const box=$('wa-instances');
+  try{
+    const r=await(await fetch(`${API}/api/whatsapp/instances`)).json();
+    const list=r.instances??[];
+    box.innerHTML=list.length?list.map(i=>{
+      const open=String(i.state).toLowerCase().includes('open');
+      return `<div class="wa-card">
+        <div class="wa-name">📱 ${esc(String(i.name).replace(/-/g,' '))}</div>
+        <div class="wa-state ${open?'on':'off'}">${esc(i.state)}</div>
+        ${open?'':`<img class="wa-qr" id="qr-${esc(i.name)}" alt="QR Code"><button class="btn ghost sm" onclick="window.waRefresh('${esc(i.name)}')">Atualizar QR</button>`}
+      </div>`;
+    }).join('')
+      :`<div class="empty">Nenhuma conexão ainda. Crie a primeira 👇</div>`;
+    // carrega QRs pendentes
+    for(const i of list){
+      if(!String(i.state).toLowerCase().includes('open')){
+        const img=document.getElementById(`qr-${i.name}`);
+        if(img){const url=await fetchQr(i.name);if(url)img.src=url;else img.alt='QR indisponível'}
+      }
+    }
+  }catch(e){box.innerHTML=`<div class="empty">Evolution API indisponível: ${esc(e.message)}</div>`}
+}
+window.waRefresh=(name)=>{toast('🔄 Gerando novo QR…');(async()=>{const url=await fetchQr(name);const img=document.getElementById(`qr-${name}`);if(img&&url)img.src=url;else toast('Sem QR novo — instância pode já estar conectada')})()};
+$('wa-create').addEventListener('click',async()=>{
+  const btn=$('wa-create');btn.disabled=true;btn.textContent='⏳ Criando instância…';
+  try{const r=await fetch(`${API}/api/whatsapp/create`,{method:'POST'});const j=await r.json();
+    toast(r.ok?'✅ Instância criada — escaneie o QR':'❌ '+(j.error||'falha'));
+    await waLoad();
+  }catch(e){toast('Erro: '+e.message)}
+  btn.disabled=false;btn.textContent='+ Criar conexão';
+});
+function openWaPopup(){$('wa-overlay').classList.add('open');waLoad();if(waPollTimer)clearInterval(waPollTimer);waPollTimer=setInterval(waLoad,8000)}
+$('wa-close').addEventListener('click',()=>{$('wa-overlay').classList.remove('open');if(waPollTimer){clearInterval(waPollTimer);waPollTimer=null}});
+document.addEventListener('click',(e)=>{const t=e.target.closest('[data-wa-computer]');if(t){e.stopPropagation();openWaPopup()}});
 
 /* ── SSE ── */
 if(window.EventSource){

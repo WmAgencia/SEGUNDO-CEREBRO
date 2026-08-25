@@ -25,30 +25,40 @@ export interface AutonomousResult {
 function isDesignTask(title: string): boolean { return /^Gerar (imagem|v[íi]deo):/i.test(title); }
 function isProjectRecordTask(title: string): boolean { return /^Registrar projeto no Drive:/i.test(title); }
 
-async function executeProjectRecordTask(taskTitle: string): Promise<{ status: 'COMPLETED'|'FAILED'; output: string; error?: string }> {
+async function executeProjectRecordTask(taskTitle: string, db: DatabaseSync, taskId: number): Promise<{ status: 'COMPLETED'|'FAILED'; output: string; error?: string }> {
   const projectName = taskTitle.replace(/^Registrar projeto no Drive:\s*/i, '').trim();
   if (!projectName) return { status: 'FAILED', output: '', error: 'nome do projeto vazio' };
+  logStep(db, 'engineering-agent', taskId, 'drive', `Criando pasta do projeto "${projectName}" no Google Drive...`);
   const r = await archiveProjectRecord({ projectName, status: 'Iniciado', notes: 'Registro criado automaticamente pelo agente.' });
   if (r.status === 'ARCHIVED') {
-    const link = r.webViewLink ?? '';
-    return { status: 'COMPLETED', output: `Projeto registrado no Drive (${r.folderPath}). Arquivo: ${link}` };
+    logStep(db, 'engineering-agent', taskId, 'done', `Pasta criada em ${r.folderPath}. registro.txt salvo.`);
+    return { status: 'COMPLETED', output: `Projeto registrado no Drive (${r.folderPath}). Arquivo: ${r.webViewLink}` };
   }
+  logStep(db, 'engineering-agent', taskId, 'error', `Falha ao registrar: ${r.error}`);
   return { status: 'FAILED', output: '', error: r.error ?? 'falha ao registrar projeto no Drive' };
 }
 
-async function executeDesignTask(taskTitle: string): Promise<{ status: 'COMPLETED'|'FAILED'; output: string; error?: string }> {
+async function executeDesignTask(taskTitle: string, db: DatabaseSync, taskId: number): Promise<{ status: 'COMPLETED'|'FAILED'; output: string; error?: string }> {
   const isVideo = /^Gerar v[íi]deo:/i.test(taskTitle);
   const rawPrompt = taskTitle.replace(/^Gerar (imagem|v[íi]deo):\s*/i, '');
   // Task titles can carry huge pasted text — cap the creative prompt.
   const prompt = rawPrompt.length > 180 ? `${rawPrompt.slice(0, 177)}...` : rawPrompt;
+  const kind = isVideo ? 'vídeo' : 'imagem';
+  logStep(db, 'designer-agent', taskId, 'generate', `Gerando ${kind} via Pollinations (${isVideo ? 'nova-reel/wan' : 'flux'})...`);
   const r = isVideo ? await generateVideoAndArchive(prompt) : await generateImageAndArchive(prompt);
   if (r.status === 'GENERATED') {
+    if (r.archived?.status === 'ARCHIVED') {
+      logStep(db, 'designer-agent', taskId, 'drive', `Subindo arquivo para o Drive (imagens/<data>/)...`);
+    } else if (r.archived) {
+      logStep(db, 'designer-agent', taskId, 'warn', `Drive falhou (${r.archived.error ?? '?'}) — usando link direto.`);
+    }
     const fallbackUrl = 'urls' in r && r.urls.length > 0 ? r.urls[0]! : '';
     const link = r.archived?.webViewLink ?? fallbackUrl;
-    const kind = isVideo ? 'Video' : 'Imagem';
     const drive = r.archived?.status === 'ARCHIVED' ? `Arquivado no Drive: ${link}` : `Link: ${link}`;
+    logStep(db, 'designer-agent', taskId, 'done', `${kind} pronta.`);
     return { status: 'COMPLETED', output: `${kind} gerada via ${r.model}. ${drive}` };
   }
+  logStep(db, 'designer-agent', taskId, 'error', `Falha: ${r.archived?.error ?? r.error ?? 'generation failed'}`);
   return { status: 'FAILED', output: '', error: r.archived?.error ?? r.error ?? 'generation failed' };
 }
 
@@ -56,6 +66,11 @@ async function executeDesignTask(taskTitle: string): Promise<{ status: 'COMPLETE
  * Executes a single task via OpenCode, evaluates the result,
  * creates a notification, and returns the next task to execute.
  */
+/** Persist a human-readable step so the office profile can stream live work logs. */
+function logStep(db: DatabaseSync, agentId: string, taskId: number | null, stage: string, message: string): void {
+  db.prepare("INSERT INTO agent_task_logs (agent_id, task_id, stage, message) VALUES (?, ?, ?, ?)").run(agentId, taskId, stage, message);
+}
+
 export async function executeNextTask(config: BrainConfig, taskId: number, agentId: string): Promise<AutonomousResult> {
   const db = new DatabaseSync(config.dbPath);
   try {
@@ -66,12 +81,14 @@ export async function executeNextTask(config: BrainConfig, taskId: number, agent
     db.prepare("UPDATE initiative_tasks SET status='RUNNING', started_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'), updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?").run(taskId);
     const runningAgent = task.assigned_agent ?? agentId;
     logEvent(db, 'task_started', runningAgent, { taskId, title: task.title });
+    logStep(db, runningAgent, taskId, 'start', `Iniciando: ${task.title}`);
 
     if (isDesignTask(task.title) || isProjectRecordTask(task.title)) {
       const agent = task.assigned_agent ?? 'designer-agent';
       const design = isProjectRecordTask(task.title)
-        ? await executeProjectRecordTask(task.title)
-        : await executeDesignTask(task.title);
+        ? await executeProjectRecordTask(task.title, db, taskId)
+        : await executeDesignTask(task.title, db, taskId);
+      logStep(db, agent, taskId, 'finish', design.status === 'COMPLETED' ? 'Concluída com sucesso.' : `Falhou: ${design.error ?? ''}`);
       db.prepare("UPDATE initiative_tasks SET status=?, result=?, completed_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'), updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?")
         .run(design.status, design.output.slice(0, 1000), taskId);
       logEvent(db, 'task_completed', agent, { taskId, kind: 'design' });
@@ -100,6 +117,7 @@ export async function executeNextTask(config: BrainConfig, taskId: number, agent
     }
 
     const workspace = task.workspace ?? NUTRIVA_WORKSPACE;
+    logStep(db, agentId, taskId, 'opencode', `Executando via OpenCode no workspace ${path.basename(workspace)}...`);
     const result = await executeEngineeringTask(config, { taskId, agentId, workspacePath: workspace, task: task.title });
 
     if (result.status === 'COMPLETED') {

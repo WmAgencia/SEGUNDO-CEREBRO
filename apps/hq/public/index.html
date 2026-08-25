@@ -61,9 +61,27 @@
 
 <!-- Agent Profile -->
 <aside class="profile-panel" id="profile-panel">
-  <button class="close-btn" id="profile-close">✕</button>
+  <button class="close-btn" id="profile-close">?</button>
   <div id="profile-content"><p class="muted">Clique num agente.</p></div>
+  <div id="agent-live-log-wrap" style="display:none;margin-top:14px">
+    <h3 style="font-size:12px;color:#8fa3b5;text-transform:uppercase;letter-spacing:.06em">📜 Log ao vivo</h3>
+    <div id="agent-live-log" class="live-log"></div>
+  </div>
+  <div id="agent-rename-wrap" style="display:none;margin-top:14px">
+    <label style="font-size:11px;color:#8fa3b5;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:6px">✏️ Renomear agente</label>
+    <div style="display:flex;gap:6px"><input id="agent-rename-input" placeholder="Novo nome (ex.: João)"><button class="btn primary sm" id="agent-rename-save">OK</button></div>
+  </div>
 </aside>
+
+<!-- WhatsApp Connections Popup -->
+<div class="overlay" id="wa-overlay">
+  <div class="modal wa-modal">
+    <div class="row-between"><h2>📱 Conexões WhatsApp</h2><button class="btn ghost sm" id="wa-close">✕</button></div>
+    <p class="muted-sm" style="margin-bottom:14px">Multi-instâncias Evolution API — conecte quantos números quiser.</p>
+    <div id="wa-instances" class="wa-grid"></div>
+    <button class="btn primary block" id="wa-create" style="margin-top:16px">+ Criar conexão</button>
+  </div>
+</div>
 
   <div class="toast" id="toast"></div>
 

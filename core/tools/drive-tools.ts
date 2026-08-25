@@ -234,6 +234,21 @@ export async function archiveArtifact(opts: {
   }
 }
 
+/** List direct children of a folder. */
+export async function listChildren(folderId: string): Promise<Array<{ id: string; name: string; mimeType: string }>> {
+  const q = encodeURIComponent(`'${folderId}' in parents and trashed = false`);
+  const res = await driveFetch(`${DRIVE_API}/files?q=${q}&fields=files(id,name,mimeType)&pageSize=100&supportsAllDrives=true&includeItemsFromAllDrives=true`);
+  if (!res.ok) throw new Error(`Drive list failed: HTTP ${res.status}`);
+  const data = await res.json() as { files?: Array<{ id: string; name: string; mimeType: string }> };
+  return data.files ?? [];
+}
+
+/** Move a file/folder to trash (reversible). */
+export async function trashItem(id: string): Promise<void> {
+  const res = await driveFetch(`${DRIVE_API}/files/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ trashed: true }) });
+  if (!res.ok) throw new Error(`Drive trash failed: HTTP ${res.status}`);
+}
+
 export interface ProjectRecordResult extends DriveUploadResult { folderPath?: string }
 
 /**
