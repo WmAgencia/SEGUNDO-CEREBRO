@@ -1,4 +1,4 @@
-export const SCHEMA_VERSION = 17;
+export const SCHEMA_VERSION = 18;
 
 export interface Migration {
   from: number;
@@ -784,6 +784,21 @@ export const MIGRATIONS: readonly Migration[] = [
   { from: 15, statements: [] },
   {
     from: 16,
+    statements: [
+      `CREATE TABLE IF NOT EXISTS agent_task_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        agent_id TEXT NOT NULL,
+        task_id INTEGER,
+        stage TEXT NOT NULL DEFAULT 'step',
+        message TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+      )`,
+      "CREATE INDEX IF NOT EXISTS idx_task_logs_agent ON agent_task_logs(agent_id, id)",
+    ],
+  },
+  // v17 bump happened without creating the table on persistent volumes — redo it.
+  {
+    from: 17,
     statements: [
       `CREATE TABLE IF NOT EXISTS agent_task_logs (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
