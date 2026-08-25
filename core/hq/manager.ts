@@ -487,11 +487,12 @@ function executeRealPlan(config: BrainConfig, s: ManagerSession): ManagerRespons
     ];
 
     // Design intent: route to Designer agent with a single image task
-    const lastUserMsg = [...s.history].reverse().find(h => h.role === 'user')?.text ?? '';
-    const isImageRequest = /\b(logo|imagem|banner|arte|ilustra[çc][ãa]o|criativo|thumbnail|capa)\b/i.test(lastUserMsg) || /^Gerar imagem:/i.test(finalTasks[0] ?? '');
+    const userMsgs = s.history.filter(h => h.role === 'user');
+    const imageMsg = [...userMsgs].reverse().find(h => /\b(logo|imagem|banner|arte|ilustra[çc][ãa]o|criativo|thumbnail|capa)\b/i.test(h.text));
+    const isImageRequest = Boolean(imageMsg) || /^Gerar imagem:/i.test(finalTasks[0] ?? '');
     let assignedAgent = 'engineering-agent';
-    if (isImageRequest) {
-      const imagePrompt = lastUserMsg
+    if (isImageRequest && imageMsg) {
+      const imagePrompt = imageMsg.text
         .replace(/^\s*designer\s*,?\s*/i, '')
         .replace(/^(por\s+favor\s*)?(pode\s+)?(gere|gerar|crie|criar|faz|fa[çc]a|fazer)\s+/i, '')
         .trim() || topic;
