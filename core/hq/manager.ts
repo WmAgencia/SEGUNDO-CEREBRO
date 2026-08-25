@@ -396,7 +396,13 @@ export async function managerChat(config: BrainConfig, text: string, sessionKey 
     const cleanResponse = llmResponse.replace(/\[PROPOSTA\]\s*$/,'').replace(/\[EXECUTADO\]\s*$/,'').trim();
     s.llmProposedPlan = isProposal;
 
-    if (isProposal && !s.topic) s.topic = extractTopic(trimmed);
+    if (isProposal) {
+      // Always update topic when a NEW plan is proposed (not just first time)
+      const newTopic = extractTopic(trimmed) ?? extractTopic(llmResponse);
+      if (newTopic) s.topic = newTopic;
+      // Store the LLM's response so executeRealPlan can extract actual tasks from it
+      s.lastBrainResult = cleanResponse;
+    }
     persistMessage(config, sessionKey, 'manager', cleanResponse, s.mode, s.topic, s.lastBrainResult);
 
     return { type:isProposal ? 'plan' : 'conversation', mode:s.mode, message:cleanResponse, intent:'CHAT',
@@ -446,15 +452,33 @@ function executeRealPlan(config: BrainConfig, s: ManagerSession): ManagerRespons
     persistGoalKnowledge(config, goal);
     db.prepare("INSERT INTO events (event_type,subject,payload) VALUES ('manager_plan_executed','manager',?)").run(JSON.stringify({goalId:goal.id,topic}));
 
-    // Extract task titles from the LLM conversation
-    const taskTitles = s.history
-      .filter(h => h.role === 'manager' && /\d\.\s|tarefa|implementar|criar|desenvolver/i.test(h.text))
-      .flatMap(h => (h.text.match(/\d\.\s+\*\*([^*]+)\*\*/g) ?? h.text.split('\n').filter(l => /^\d+\./.test(l.trim())))
-        .map(l => l.replace(/^\d+\.\s*\*?\*?/, '').replace(/\*\*/g,'').trim().slice(0, 80)))
-      .filter(t => t.length > 5 && !/confirm|validar com você|registr/i.test(t))
-      .slice(0, 8);
+    // Extract tasks from the LAST LLM response (the one with [PROPOSTA])
+    // NOT from the entire conversation history
+    const lastProposal = s.lastBrainResult ?? '';
+    const taskTitles: string[] = [];
 
-    const finalTasks = taskTitles.length > 0 ? taskTitles : [
+    // Match numbered items: "1. Task", "1) Task", "- Task", "• Task"
+    const lines = lastProposal.split('\n');
+    for (const line of lines) {
+      const trimmed = line.trim();
+      // Skip headers, empty lines, and non-task lines
+      if (!trimmed || trimmed.startsWith('#') || trimmed.startsWith('---')) continue;
+      // Match numbered: "1. Something" or "1) Something"
+      const numbered = trimmed.match(/^\d+[\.\)]\s+(.+)/);
+      if (numbered?.[1]) {
+        const clean = numbered[1].replace(/\*\*/g,'').trim();
+        if (clean.length > 5 && clean.length < 120 && !/confirm|validar com você|registr/i.test(clean)) taskTitles.push(clean);
+        continue;
+      }
+      // Match bullet: "- Something" or "• Something"
+      const bulleted = trimmed.match(/^[-•]\s+(.+)/);
+      if (bulleted?.[1]) {
+        const clean = bulleted[1].replace(/\*\*/g,'').trim();
+        if (clean.length > 5 && clean.length < 120 && !/confirm|validar com você|registr/i.test(clean)) taskTitles.push(clean);
+      }
+    }
+
+    const finalTasks = taskTitles.length > 0 ? taskTitles.slice(0, 10) : [
       `Analisar escopo de ${topic}`,
       `Implementar núcleo de ${topic}`,
       `Testar e validar ${topic}`,
@@ -467,13 +491,9 @@ function executeRealPlan(config: BrainConfig, s: ManagerSession): ManagerRespons
     if (ready[0]!==undefined) assignTask(db, ready[0], { agentId:'engineering-agent', reason:'Manager delegou primeira task do plano conversacional' });
     persistInitiativeKnowledge(config, goal, init, finalTasks);
 
-    // Notify owner that tasks were created and dispatched
-    createNotification(db, {
-      type: 'info',
-      title: `📋 Plano criado: ${goalName}`,
-      body: `${finalTasks.length} tarefas criadas. Primeira task dispatchada para Engineering Agent.`,
-      goalId: goal.id,
-    });
+    // Reset LLM plan state
+    s.llmProposedPlan = false;
+    s.lastBrainResult = null;
 
     return { type:'execution', mode:s.mode,
       message:`Plano executado. Criei o objetivo "${goalName}" com ${finalTasks.length} tarefas:\n${finalTasks.map((t,i)=>`${i+1}. ${t}`).join('\n')}\n\nA primeira tarefa foi dispatchada para o Engineering Agent. Acompanhe o progresso no escritório.`,

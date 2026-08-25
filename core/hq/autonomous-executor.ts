@@ -86,9 +86,9 @@ export async function executeNextTask(config: BrainConfig, taskId: number, agent
  * Creates notifications for each step. Stops on failure or kill switch.
  */
 export async function runInitiativeAutonomously(config: BrainConfig, initiativeId: string, workspacePath: string): Promise<Array<AutonomousResult>> {
-  const db = new DatabaseSync(config.dbPath);
   const results: AutonomousResult[] = [];
   try {
+    const db = new DatabaseSync(config.dbPath);
     let nextId: number|null = null;
     const first = db.prepare(
       "SELECT id FROM initiative_tasks WHERE initiative_id=? AND status IN ('READY','ASSIGNED') ORDER BY ordinal LIMIT 1"
@@ -97,7 +97,6 @@ export async function runInitiativeAutonomously(config: BrainConfig, initiativeI
     db.close();
 
     while (nextId !== null) {
-      // Check kill switch
       const checkDb = new DatabaseSync(config.dbPath);
       const killed = checkDb.prepare("SELECT kill_switch FROM agent_runs WHERE kill_switch=1 AND state='PAUSED' LIMIT 1").get();
       checkDb.close();
@@ -110,5 +109,8 @@ export async function runInitiativeAutonomously(config: BrainConfig, initiativeI
     }
 
     return results;
-  } finally { db.close(); }
+  } catch (err) {
+    console.error(`[autonomous] error: ${err instanceof Error ? err.message : String(err)}`);
+    return results;
+  }
 }
