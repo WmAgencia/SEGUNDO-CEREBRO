@@ -12,5 +12,4 @@ tests/
 mcp/
 scripts/
 webhook-live.log
-apps/nutriva/
 apps/cli/
