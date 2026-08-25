@@ -1,0 +1,7 @@
+{
+  "buildCommand": "echo 'Static site - no build needed'",
+  "outputDirectory": "public",
+  "installCommand": "echo 'skip install'",
+  "devCommand": "echo 'no dev server'",
+  "framework": "vite"
+}

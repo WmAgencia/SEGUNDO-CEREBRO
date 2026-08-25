@@ -24,6 +24,7 @@ import { executeEngineeringTask } from "../../core/hq/engineering.ts";
 import { listNotifications, unreadCount, markRead, markAllRead, createNotification } from "../../core/hq/notifications.ts";
 import { runInitiativeAutonomously } from "../../core/hq/autonomous-executor.ts";
 import { getInstance as getWhatsAppInstance, setAiEnabled as setInstanceAiEnabled, setConnected as setInstanceConnected } from "../../core/comms/instance-state.ts";
+import { detectOrphanedRuns } from "../../core/agents/runtime-ops.ts";
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.join(root, "public");
@@ -231,3 +232,15 @@ const server = createServer((req, res) => {
   res.writeHead(200, { "Content-Type": type }); res.end(readFileSync(file));
 });
 server.listen(port, host, () => process.stdout.write(`Second Brain HQ on http://${host}:${port}\n`));
+
+// ── Runtime ops: orphan detection periódica (runs mortos → requeue honesto) ──
+const ORPHAN_INTERVAL_MS = Number(process.env.RUNTIME_ORPHAN_SCAN_MS ?? 300_000);
+setInterval(() => {
+  try {
+    const db = new DatabaseSync(config.dbPath);
+    try {
+      const report = detectOrphanedRuns(db);
+      if (report.detected.length > 0) process.stdout.write(`[runtime] orphans: ${report.detected.length} detectado(s), ${report.recovered.length} task(s) reenfileirada(s)\n`);
+    } finally { db.close(); }
+  } catch { /* DB indisponível — próximo ciclo tenta novamente */ }
+}, ORPHAN_INTERVAL_MS).unref();
