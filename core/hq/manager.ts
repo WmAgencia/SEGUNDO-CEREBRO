@@ -88,7 +88,7 @@ function persistMessage(config: BrainConfig, sessionKey: string, role: 'user'|'m
 
 /* ── CONTEXT ASSEMBLY ── */
 
-function buildSystemContext(config: BrainConfig, s: ManagerSession): string {
+export function buildSystemContext(config: BrainConfig, s: ManagerSession): string {
   const db = new DatabaseSync(config.dbPath);
   try {
     const parts: string[] = [];
@@ -96,6 +96,14 @@ function buildSystemContext(config: BrainConfig, s: ManagerSession): string {
     // Active goals
     const goals = db.prepare("SELECT name,type,target,current_value,status FROM goals WHERE status='ACTIVE' ORDER BY updated_at DESC LIMIT 5").all() as unknown as Array<{name:string;type:string;target:number|null;current_value:number|null;status:string}>;
     if (goals.length) parts.push(`Objetivos ativos: ${goals.map(g=>`"${g.name}"${g.target?` (meta: ${g.target})`:''}`).join('; ')}`);
+
+    // Recent goals regardless of status (ACHIEVED/PAUSED etc. still exist!)
+    const otherGoals = db.prepare("SELECT name,status,updated_at FROM goals WHERE status!='ACTIVE' ORDER BY updated_at DESC LIMIT 6").all() as unknown as Array<{name:string;status:string;updated_at:string}>;
+    if (otherGoals.length) parts.push(`Outros objetivos no histórico: ${otherGoals.map(g=>`"${g.name}" (${g.status})`).join('; ')}`);
+
+    // Initiatives = registered projects/plans
+    const inits = db.prepare("SELECT title,status,project FROM initiatives ORDER BY rowid DESC LIMIT 8").all() as unknown as Array<{title:string;status:string;project:string|null}>;
+    if (inits.length) parts.push(`Iniciativas/projetos registrados: ${inits.map(i=>`"${i.title}" (${i.status}${i.project?`, projeto ${i.project}`:''})`).join('; ')}`);
 
     // Recent tasks
     const tasks = db.prepare("SELECT title,status,assigned_agent FROM initiative_tasks WHERE status NOT IN ('COMPLETED','CANCELLED') ORDER BY id DESC LIMIT 8").all() as unknown as Array<{title:string;status:string;assigned_agent:string|null}>;
@@ -149,6 +157,11 @@ Sua função:
 - Quando o usuário quiser criar um objetivo, propor um plano e peça confirmação.
 - NUNCA invente dados que não estão no contexto.
 - Se o contexto não tiver a informação, diga que não encontrou e ofereça buscar.
+- REGRA CRÍTICA: se o contexto listar objetivos, iniciativas, projetos ou tarefas, você DEVE citá-los
+  quando perguntarem sobre eles. NUNCA afirme que "não há nada registrado" ou que "não existe nada"
+  sobre um assunto se o contexto contém itens relacionados. Procure por palavras-chave do assunto
+  (ex.: "Nutriva") em TODAS as seções do contexto, incluindo histórico e concluídos.
+- Um objetivo concluído (ACHIEVED) ou tarefa COMPLETA ainda é informação real: relate o que foi feito e quando.
 
 IMPORTANTE — AÇÃO OPERACIONAL:
 Quando você propor um plano, objetivo, ou sugerir criar tarefas/goals/initiatives,
@@ -326,7 +339,11 @@ function fallbackResponse(config: BrainConfig, text: string, s: ManagerSession):
 
     // ── STOP/RESUME ──
     if (/^(pare tudo|para tudo|kill)/i.test(t)) return doStop(config, s);
-    if (/^(continue|retomar|resume)$/i.test(t)) return doResume(config, s);
+    if (/^(continue|retomar|resume)$/i.test(t)) {
+      const paused = db.prepare("SELECT COUNT(*) AS n FROM agent_runs WHERE kill_switch=1 AND state='PAUSED'").get() as { n: number };
+      if (paused.n > 0) return doResume(config, s);
+      // Nothing paused: fall through to generic conversation instead of a hollow resume.
+    }
 
     // ── GENERIC (with anti-loop) ──
     if (s.topic) {
@@ -366,7 +383,14 @@ export async function managerChat(config: BrainConfig, text: string, sessionKey 
 
   // ── 1. EXPLICIT COMMANDS (always deterministic, never LLM) ──
   if (/^(pare tudo|para tudo|kill switch|stop everything)$/i.test(t)) return doStop(config, s);
-  if (/^(continue|retomar|resume)$/i.test(t)) return doResume(config, s);
+  if (/^(continue|retomar|resume)$/i.test(t)) {
+    const cdb = new DatabaseSync(config.dbPath);
+    try {
+      const paused = cdb.prepare("SELECT COUNT(*) AS n FROM agent_runs WHERE kill_switch=1 AND state='PAUSED'").get() as { n: number };
+      if (paused.n > 0) return doResume(config, s);
+    } finally { cdb.close(); }
+    // Nothing paused: treat as conversational continuation instead of a command.
+  }
   if (/^(plane|brain|build)$/i.test(t)) { s.mode = t as ManagerMode; return resp(s, `Modo ${s.mode} ativo.`); }
 
   // ── 2. CONFIRMATION — executes REAL actions ──
@@ -425,7 +449,14 @@ export async function managerChat(config: BrainConfig, text: string, sessionKey 
   let fallbackResult: ManagerResponse;
   switch (intent) {
     case 'STOP': fallbackResult = doStop(config, s); break;
-    case 'RESUME': fallbackResult = doResume(config, s); break;
+    case 'RESUME': {
+      const cdb = new DatabaseSync(config.dbPath);
+      try {
+        const paused = cdb.prepare("SELECT COUNT(*) AS n FROM agent_runs WHERE kill_switch=1 AND state='PAUSED'").get() as { n: number };
+        fallbackResult = paused.n > 0 ? doResume(config, s) : fallbackResponse(config, trimmed, s);
+      } finally { cdb.close(); }
+      break;
+    }
     case 'MODE_SWITCH': { s.mode = trimmed.toLowerCase().replace(/[.!?]+$/,'') as ManagerMode; fallbackResult = resp(s, `Modo ${s.mode} ativo.`); break; }
     case 'EXECUTION_CONFIRM': fallbackResult = doExecute(config, s); break;
     case 'GOAL_CREATION': fallbackResult = doPropose(trimmed, s); break;

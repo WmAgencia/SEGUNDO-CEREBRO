@@ -48,10 +48,15 @@ describe("Manager Conversacional", () => {
     expect(r.actions[0]?.status).toBe("executed");
   });
 
-  it("TEST 10: 'Continue.' → resume", async () => {
-    const cfg = config(); const db = openDatabase(cfg.dbPath); applySchema(db); db.close();
+  it("TEST 10: 'Continue.' → resume SOMENTE com runs pausados", async () => {
+    const cfg = config(); const db = openDatabase(cfg.dbPath); applySchema(db);
+    db.prepare("INSERT INTO agent_runs (id,session_id,agent_id,state,kill_switch,correlation_id) VALUES ('run-t10','s10','engineering-agent','PAUSED',1,'c10')").run();
+    db.close();
     const r = await managerChat(cfg, "Continue.", "test-10");
     expect(r.intent).toBe("RESUME");
+    // Sem runs pausados, 'continue' NÃO deve disparar resume
+    const r2 = await managerChat(cfg, "Continue.", "test-10b");
+    expect(r2.intent).not.toBe("RESUME");
   });
 
   it("TEST 7+8: Goal → confirmação → execução", async () => {
@@ -167,5 +172,20 @@ describe("Manager Conversacional", () => {
     expect(tasks.length).toBe(1);
     expect(tasks[0]!.title).toMatch(/^Registrar projeto no Drive:\s*site/i);
     expect(tasks[0]!.assigned_agent).toBe("engineering-agent");
+  });
+
+  it("TEST contexto: goal concluida e iniciativa NUNCA somem do radar do gerente", async () => {
+    const cfg = config(); const db = openDatabase(cfg.dbPath); applySchema(db);
+    db.prepare("INSERT INTO goals (id,name,type,status,owner_agent,created_at,updated_at) VALUES ('goal.x','Executar: nutriva','PROJECT','ACHIEVED','manager',datetime('now'),datetime('now'))").run();
+    db.prepare("INSERT INTO initiatives (id,title,description,goal_id,status) VALUES ('init.x','Projeto: site para a Nutriva','teste','goal.x','COMPLETED')").run();
+    db.prepare("INSERT INTO initiative_tasks (id,initiative_id,title,status,ordinal) VALUES (999,'init.x','Registrar projeto no Drive: site','COMPLETED',1)").run();
+    db.close();
+    const { buildSystemContext } = await import("../core/hq/manager.ts");
+    const s = { mode:'plane', pending:null, history:[], topic:null, lastBrainResult:null, lastPlanSummary:null, llmProposedPlan:false } as never;
+    const ctx = buildSystemContext(cfg, s);
+    expect(ctx).toContain("Executar: nutriva");
+    expect(ctx).toContain("ACHIEVED");
+    expect(ctx).toContain("Projeto: site para a Nutriva");
+    expect(ctx).toContain("Iniciativas/projetos registrados");
   });
 });
