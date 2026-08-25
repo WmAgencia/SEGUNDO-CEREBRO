@@ -1,6 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
 import type { BrainConfig } from "../config/loader.ts";
 import { ensureCommTables, resolveContact, resolveConversation, saveMessage, isDuplicateMessage, classifyIntent, getCustomerProfile, nextBestAction, nextBestQuestion, stageForIntent, updateCustomerProfile, updateProfileFromMessage } from "../comms/pipeline.ts";
+import { inboundPolicy } from "../comms/instance-state.ts";
 import { redactSecrets } from "../exec/redact.ts";
 import { ANA_PHONE, compilePersonalContext, personalReply, qualityGate } from "../personal/personal-agent.ts";
 import { setKillSwitch } from "../autonomous/cycle.ts";
@@ -43,7 +44,7 @@ export function handleEvolutionWebhook(
 
     switch (event) {
       case "MESSAGES_UPSERT":
-        return processIncomingMessage(db, config, body.data);
+        return processIncomingMessage(db, config, body.data, body.instance);
       case "CONNECTION_UPDATE":
         logEvent(db, "connection_update", body.instance, {});
         return { processed: true, action: "connection_update_logged" };
@@ -64,6 +65,7 @@ function processIncomingMessage(
   db: DatabaseSync,
   config: BrainConfig,
   data?: Record<string, unknown>,
+  instanceName?: string,
 ): {
   processed: boolean;
   action?: string;
@@ -125,6 +127,16 @@ function processIncomingMessage(
   const contact = resolveContact(db, phone.replace(/\D/g, ""), pushName);
   const conversation = resolveConversation(db, contact.id);
   saveMessage(db, conversation.id, externalId, "inbound", msgContent);
+
+  // AI ON/OFF policy: connected instance with AI disabled persists the inbound
+  // message for the record but the commercial agent does NOT respond.
+  if (instanceName) {
+    const policy = inboundPolicy(db, instanceName);
+    if (policy.action === "SKIP_AI_DISABLED") {
+      logEvent(db, "inbound_ai_skipped", phone, { instance: instanceName, reason: policy.reason });
+      return { processed: true, action: "ai_disabled_message_persisted_no_reply", recipient: phone };
+    }
+  }
 
   const intent = classifyIntent(msgContent);
   const profile = getCustomerProfile(db, contact.id);

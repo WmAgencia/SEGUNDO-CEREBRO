@@ -10,6 +10,7 @@ import { createNotification } from "./notifications.ts";
 import { completeWithGateway } from "../ai/model-router.ts";
 import { getAllAgentStates } from "./agent-state.ts";
 import { runInitiativeParallel } from "./orchestrator.ts";
+import { persistConversationNote } from "../obsidian/conversation-notes.ts";
 
 export type ManagerMode = 'plane' | 'brain' | 'build';
 export type ManagerIntent = 'CHAT'|'QUESTION'|'IDEA'|'GOAL_CREATION'|'EXECUTION_CONFIRM'|'STOP'|'RESUME'|'STATUS'|'DIAGNOSIS'|'MODE_SWITCH'|'BRAIN_QUERY'|'IMAGE_REQUEST';
@@ -66,6 +67,16 @@ function getSession(key: string, config?: BrainConfig): ManagerSession {
           session.topic = meta.topic ?? session.topic;
           session.lastBrainResult = meta.last_brain_result ?? null;
         }
+        // Restore pending plan from database if exists
+        const pending = db.prepare("SELECT goal_name, goal_type, target, tasks FROM pending_plans WHERE session_key=? LIMIT 1").get(key) as {goal_name:string;goal_type:string;target:number|null;tasks:string[]}|undefined;
+        if (pending) {
+          session.pending = {
+            goalName: pending.goal_name,
+            goalType: pending.goal_type as 'FINANCIAL'|'PROJECT',
+            target: pending.target ?? undefined,
+            tasks: pending.tasks || [],
+          };
+        }
       } finally { db.close(); }
     } catch {}
   }
@@ -83,6 +94,8 @@ function persistMessage(config: BrainConfig, sessionKey: string, role: 'user'|'m
         ON CONFLICT(session_key) DO UPDATE SET mode=excluded.mode,topic=excluded.topic,last_brain_result=excluded.last_brain_result,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`)
         .run(sessionKey, mode, topic ?? '', lastBrainResult ?? '');
     } finally { db.close(); }
+    // Obsidian = camada de contexto humano. Falha aqui NÃO pode quebrar o chat.
+    try { persistConversationNote(config, sessionKey, { role, text, mode, topic }); } catch {}
   } catch {}
 }
 
@@ -197,7 +210,7 @@ async function callLLM(config: BrainConfig, s: ManagerSession, userMessage: stri
     { role: 'user' as const, content: userMessage },
   ];
   try {
-    const result = await completeWithGateway(null, { messages, maxTokens: 800, temperature: 0.3 }, { workload: 'reasoning', agent: 'manager', task: userMessage });
+    const result = await completeWithGateway(null, { messages, maxTokens: 550, temperature: 0.3 }, { workload: 'reasoning', agent: 'manager', task: userMessage });
     console.log(`[manager] LLM responded via ${result.provider}/${result.model} (${result.latencyMs}ms)`);
     return result.content;
   } catch (error) {
@@ -504,6 +517,20 @@ export async function managerChat(config: BrainConfig, text: string, sessionKey 
   persistMessage(config, sessionKey, 'user', trimmed, s.mode, s.topic, s.lastBrainResult);
   const t = trimmed.toLowerCase().replace(/[.!?]+$/,'');
 
+  // ── 0. GREETINGS (natural conversation, always deterministic) ──
+  if (/^(oi+|olá|ola|hey|e\s+a[íi]|eai|e\s+ai|bom dia|boa tarde|boa noite|opa|fala)\b/i.test(t)) {
+    const greetings = [
+      "Oi! Sou o Gerente. Posso conversar sobre estratégia, criar objetivos, consultar o Second Brain e coordenar os agentes. Sobre o que quer falar?",
+      "Olá! Tudo bem. Tenho acesso ao banco de dados, aos agentes e ao Second Brain. O que você quer fazer?",
+      "Oi! tudo funcionando. Tenho acesso ao banco de dados, aos agentes e ao Second Brain. O que você quer fazer?",
+    ];
+    const idx = s.history.length % greetings.length;
+    const response: string = greetings[idx] ?? greetings[0]!;
+    s.history.push({ role:'manager', text:response });
+    persistMessage(config, sessionKey, 'manager', response, s.mode, s.topic, s.lastBrainResult);
+    return { type:'conversation', mode:s.mode, message:response, intent:'CHAT', actions:[], requiresConfirmation:false };
+  }
+
   // ── 1. EXPLICIT COMMANDS (always deterministic, never LLM) ──
   if (/^(pare tudo|para tudo|kill switch|stop everything)$/i.test(t)) return doStop(config, s);
   if (/^(continue|retomar|resume)$/i.test(t)) {
@@ -573,8 +600,7 @@ export async function managerChat(config: BrainConfig, text: string, sessionKey 
 
   // ── 5. Deterministic fallback (no LLM configured) ──
   const intent = classifyFallback(trimmed, s);
-  let fallbackResult: ManagerResponse;
-  switch (intent) {
+  let fallbackResult: ManagerResponse;  switch (intent) {
     case 'STOP': fallbackResult = doStop(config, s); break;
     case 'RESUME': {
       const cdb = new DatabaseSync(config.dbPath);
@@ -590,6 +616,14 @@ export async function managerChat(config: BrainConfig, text: string, sessionKey 
     default: fallbackResult = fallbackResponse(config, trimmed, s); break;
   }
   persistMessage(config, sessionKey, 'manager', fallbackResult.message, s.mode, s.topic, s.lastBrainResult);
+  // Honestidade: se o LLM não está configurado, sinalizar explicitamente que a
+  // resposta veio do caminho determinístico — nunca fingir consulta ao LLM.
+  if (!process.env.OPENROUTER_API_KEY) {
+    fallbackResult.contextCards = [
+      ...(fallbackResult.contextCards ?? []),
+      { label: 'LLM', value: 'não configurado — resposta determinística (OPENROUTER_API_KEY ausente)' },
+    ];
+  }
   return fallbackResult;
 }
 

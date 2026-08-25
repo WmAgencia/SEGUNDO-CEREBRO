@@ -1,4 +1,4 @@
-export const SCHEMA_VERSION = 19;
+export const SCHEMA_VERSION = 20;
 
 export interface Migration {
   from: number;
@@ -717,6 +717,42 @@ export const SCHEMA_STATEMENTS: readonly string[] = [
      content TEXT NOT NULL,
      created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
    )`,
+  `CREATE TABLE IF NOT EXISTS leads (
+     id            TEXT PRIMARY KEY,
+     company_name  TEXT NOT NULL,
+     contact_name  TEXT,
+     phone         TEXT,
+     email         TEXT,
+     website       TEXT,
+     instagram     TEXT,
+     linkedin      TEXT,
+     tiktok        TEXT,
+     source        TEXT NOT NULL,
+     source_url    TEXT,
+     category      TEXT,
+     city          TEXT,
+     state         TEXT,
+     country       TEXT DEFAULT 'BR',
+     qualification_score INTEGER NOT NULL DEFAULT 0,
+     signals_json  TEXT NOT NULL DEFAULT '[]',
+     evidence_json TEXT NOT NULL DEFAULT '[]',
+     status        TEXT NOT NULL DEFAULT 'NEW',
+     last_contact  TEXT,
+     assigned_agent TEXT,
+     created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+     updated_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+     UNIQUE(source, company_name, city)
+   )`,
+  "CREATE INDEX IF NOT EXISTS idx_leads_status ON leads(status)",
+  "CREATE INDEX IF NOT EXISTS idx_leads_score ON leads(qualification_score DESC)",
+  `CREATE TABLE IF NOT EXISTS whatsapp_instances (
+     name           TEXT PRIMARY KEY,
+     connected      INTEGER NOT NULL DEFAULT 0,
+     ai_enabled     INTEGER NOT NULL DEFAULT 0,
+     assigned_agent TEXT,
+     phone          TEXT,
+     updated_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+   )`,
 ];
 
 export interface Migration {
@@ -871,6 +907,47 @@ export const MIGRATIONS: readonly Migration[] = [
         created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
         updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
       )`,
+    ],
+  },
+  {
+    from: 19,
+    statements: [
+      `CREATE TABLE IF NOT EXISTS leads (
+         id            TEXT PRIMARY KEY,
+         company_name  TEXT NOT NULL,
+         contact_name  TEXT,
+         phone         TEXT,
+         email         TEXT,
+         website       TEXT,
+         instagram     TEXT,
+         linkedin      TEXT,
+         tiktok        TEXT,
+         source        TEXT NOT NULL,
+         source_url    TEXT,
+         category      TEXT,
+         city          TEXT,
+         state         TEXT,
+         country       TEXT DEFAULT 'BR',
+         qualification_score INTEGER NOT NULL DEFAULT 0,
+         signals_json  TEXT NOT NULL DEFAULT '[]',
+         evidence_json TEXT NOT NULL DEFAULT '[]',
+         status        TEXT NOT NULL DEFAULT 'NEW',
+         last_contact  TEXT,
+         assigned_agent TEXT,
+         created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+         updated_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+         UNIQUE(source, company_name, city)
+       )`,
+      "CREATE INDEX IF NOT EXISTS idx_leads_status ON leads(status)",
+      "CREATE INDEX IF NOT EXISTS idx_leads_score ON leads(qualification_score DESC)",
+      `CREATE TABLE IF NOT EXISTS whatsapp_instances (
+         name           TEXT PRIMARY KEY,
+         connected      INTEGER NOT NULL DEFAULT 0,
+         ai_enabled     INTEGER NOT NULL DEFAULT 0,
+         assigned_agent TEXT,
+         phone          TEXT,
+         updated_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+       )`,
     ],
   },
 ];

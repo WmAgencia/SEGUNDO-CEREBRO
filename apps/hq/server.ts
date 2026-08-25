@@ -23,6 +23,7 @@ import { transcribeAudio } from "../../core/audio/transcription.ts";
 import { executeEngineeringTask } from "../../core/hq/engineering.ts";
 import { listNotifications, unreadCount, markRead, markAllRead, createNotification } from "../../core/hq/notifications.ts";
 import { runInitiativeAutonomously } from "../../core/hq/autonomous-executor.ts";
+import { getInstance as getWhatsAppInstance, setAiEnabled as setInstanceAiEnabled, setConnected as setInstanceConnected } from "../../core/comms/instance-state.ts";
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.join(root, "public");
@@ -129,13 +130,32 @@ const server = createServer((req, res) => {
         if (req.method === "GET" && sub === "/instances") {
           const r = await wa("/instance/fetchInstances");
           const raw = await r.json();
-          const list = (Array.isArray(raw) ? raw : []).map((i: { name?: string; instanceName?: string; state?: string; connectionStatus?: string }) => ({ name: i.name ?? i.instanceName ?? "?", state: i.state ?? i.connectionStatus ?? "unknown" }));
-          return send(200, { instances: list });
+          const db = new DatabaseSync(config.dbPath);
+          try {
+            const list = (Array.isArray(raw) ? raw : []).map((i: { name?: string; instanceName?: string; state?: string; connectionStatus?: string }) => {
+              const name = i.name ?? i.instanceName ?? "?";
+              const local = getWhatsAppInstance(db, name);
+              const connected = (i.state ?? i.connectionStatus ?? "unknown") === "open";
+              if (local.connected !== connected) setInstanceConnected(db, name, connected);
+              return { name, state: i.state ?? i.connectionStatus ?? "unknown", aiEnabled: local.aiEnabled, assignedAgent: local.assignedAgent };
+            });
+            return send(200, { instances: list });
+          } finally { db.close(); }
         }
+        const aiMatch = sub.match(/^\/ai\/(.+)$/);
         let body = "";
         req.on("data", (c: Buffer) => { body += c.toString(); });
         await new Promise<void>((resolve) => req.on("end", () => resolve()));
         const input = body ? (JSON.parse(body) as Record<string, unknown>) : {};
+        if (req.method === "POST" && aiMatch) {
+          const enabled = Boolean((input as { enabled?: boolean }).enabled);
+          const agent = typeof (input as { assignedAgent?: string }).assignedAgent === "string" ? (input as { assignedAgent?: string }).assignedAgent : undefined;
+          const db = new DatabaseSync(config.dbPath);
+          try {
+            const inst = setInstanceAiEnabled(db, decodeURIComponent(aiMatch[1]!), enabled, agent);
+            return send(200, { ok: true, instance: inst });
+          } finally { db.close(); }
+        }
         if (req.method === "POST" && sub === "/create") {
           const existing = await (await wa("/instance/fetchInstances")).json() as Array<{ name?: string; instanceName?: string }>;
           const names = new Set(existing.map((i) => i.name ?? i.instanceName));
