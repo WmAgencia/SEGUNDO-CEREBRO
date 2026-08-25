@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nutriva — Central da Nutricionista</title>
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='80' font-size='80'>🌿</text></svg>">
+</head>
+<body>
+<div class="shell">
+  <aside class="sidebar">
+    <div class="brand"><span class="brand-leaf">🌿</span><div><b>Nutriva</b><small>central da nutricionista</small></div></div>
+    <nav id="nav">
+      <button data-page="dashboard" class="nav-item active">Dashboard</button>
+      <button data-page="pacientes" class="nav-item">Pacientes</button>
+      <button data-page="planos" class="nav-item">Planos alimentares</button>
+      <button data-page="substituicoes" class="nav-item">Substituições</button>
+      <button data-page="receitas" class="nav-item">Receitas</button>
+    </nav>
+    <div class="sidebar-foot">v0.2 · determinístico primeiro</div>
+  </aside>
+
+  <main class="main">
+    <!-- DASHBOARD -->
+    <section data-view="dashboard" class="view active">
+      <h1>Bom dia 👋</h1>
+      <p class="sub">Sua operação nutricional em um só lugar.</p>
+      <div class="stats" id="stats"></div>
+      <div class="card">
+        <div class="card-head"><h2>Pacientes recentes</h2><button class="btn ghost sm" data-goto="pacientes">Ver todos</button></div>
+        <div id="recent-patients"></div>
+      </div>
+    </section>
+
+    <!-- PACIENTES -->
+    <section data-view="pacientes" class="view">
+      <div class="row-between">
+        <div><h1>Pacientes</h1><p class="sub">Cadastro completo e histórico.</p></div>
+        <button class="btn primary" id="btn-new-patient">+ Novo paciente</button>
+      </div>
+      <div class="card"><table class="table" id="patients-table"><thead><tr><th>Nome</th><th>Telefone</th><th>Peso</th><th>Objetivo</th><th>Status</th></tr></thead><tbody></tbody></table><div class="empty" id="patients-empty">Nenhum paciente ainda. Crie o primeiro 🌱</div></div>
+    </section>
+
+    <!-- PLANOS -->
+    <section data-view="planos" class="view">
+      <div><h1>Plano alimentar</h1><p class="sub">Monte refeições — o cálculo é automático e determinístico.</p></div>
+      <div class="plan-grid">
+        <div class="card">
+          <label>Paciente</label>
+          <select id="plan-patient"></select>
+          <label style="margin-top:12px">Nome do plano</label>
+          <input id="plan-name" placeholder="Ex.: Emagrecimento agosto">
+          <div id="meals"></div>
+          <button class="btn ghost block" id="btn-add-meal">+ Adicionar refeição</button>
+          <div class="plan-actions">
+            <div class="daily-total" id="daily-total"></div>
+            <button class="btn primary" id="btn-save-plan">Salvar plano</button>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-head"><h2>Planos salvos</h2></div>
+          <div id="saved-plans" class="muted-sm">Carregando…</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- SUBSTITUIÇÕES -->
+    <section data-view="substituicoes" class="view">
+      <div><h1>Substituições</h1><p class="sub">Algoritmo nutricional — equivalência por proteína e similaridade.</p></div>
+      <div class="card sub-form">
+        <div class="food-search-wrap"><input id="sub-food" placeholder="Buscar alimento original…" autocomplete="off"><div class="autocomplete" id="sub-food-ac"></div></div>
+        <input id="sub-qty" type="number" value="120" min="1" class="w90"><span class="unit-label" id="sub-unit">g</span>
+        <button class="btn primary" id="btn-sub">Substituir</button>
+      </div>
+      <div id="sub-results"></div>
+    </section>
+
+    <!-- RECEITAS -->
+    <section data-view="receitas" class="view">
+      <div><h1>Receitas</h1><p class="sub">Monte os ingredientes — o sistema calcula tudo.</p></div>
+      <div class="card">
+        <input id="recipe-name" placeholder="Nome da receita. Ex.: Panqueca de banana proteica">
+        <div id="recipe-items"></div>
+        <button class="btn ghost sm" id="btn-add-ingredient">+ Ingrediente</button>
+        <div class="recipe-foot">
+          <label>Rende <input id="recipe-portions" type="number" value="2" min="1" class="w70"> porções</label>
+          <div id="recipe-totals" class="totals-box"></div>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<!-- MODAL NOVO PACIENTE -->
+<div class="overlay" id="patient-overlay">
+  <div class="modal">
+    <h2>Novo paciente</h2>
+    <div class="form-grid">
+      <label>Nome *<input id="np-name" placeholder="Nome completo"></label>
+      <label>Telefone / WhatsApp<input id="np-phone" placeholder="(16) 99999-9999"></label>
+      <label>Nascimento<input id="np-birth" type="date"></label>
+      <label>Gênero<select id="np-gender"><option value="">—</option><option>Feminino</option><option>Masculino</option></select></label>
+      <label>Altura (cm)<input id="np-height" type="number"></label>
+      <label>Peso (kg)<input id="np-weight" type="number" step="0.1"></label>
+      <label class="full">Objetivo<select id="np-goal"><option value="">—</option><option>Emagrecimento</option><option>Ganho de massa</option><option>Manutenção</option><option>Reeducação alimentar</option><option>Controle glicêmico</option><option>Performance</option></select></label>
+    </div>
+    <div class="modal-actions">
+      <button class="btn ghost" id="np-cancel">Cancelar</button>
+      <button class="btn primary" id="np-save">Salvar paciente</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+<script src="app.js"></script>
+</body>
+</html>

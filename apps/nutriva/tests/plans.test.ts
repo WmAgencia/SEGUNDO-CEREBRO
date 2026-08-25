@@ -1,12 +1,14 @@
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
-import { initNutrivaSchema } from "../src/db/nutriva-schema.ts";
+import { initNutrivaSchema, ensureDefaultTenant } from "../src/db/nutriva-schema.ts";
 import { seedFoods } from "../src/db/foods.ts";
 import { calculateItemNutrition, calculatePlan, calculateRecipe, findSubstitutions, sumTotals } from "../src/services/plans.ts";
+import { persistFullPlan, getFullPlan } from "../src/db/plans-db.ts";
 
 function setup(): DatabaseSync {
   const db = new DatabaseSync(":memory:");
   initNutrivaSchema(db);
+  ensureDefaultTenant(db);
   seedFoods(db);
   return db;
 }
@@ -78,5 +80,28 @@ describe("nutriva — motores deterministicos", () => {
     expect(r.perPortion.kcal).toBe(r.total.kcal / 2);
     expect(r.perPortion.protein).toBeCloseTo(r.total.protein / 2, 1);
     expect(r.ingredients).toHaveLength(4);
+  });
+
+  it("persiste plano completo e recarrega com refeicoes e itens", () => {
+    const db = setup();
+    db.prepare("INSERT INTO patients (id, tenant_id, name) VALUES (1, 1, 'Maria Silva')").run();
+    const pao = foodIdByName(db, "Pão francês");
+    const ovo = foodIdByName(db, "Ovo cozido");
+    const planId = persistFullPlan(db, {
+      patientId: 1,
+      name: "Emagrecimento",
+      meals: [
+        { name: "Café da manhã", items: [{ foodId: pao, quantity: 50 }, { foodId: ovo, quantity: 2 }] },
+        { name: "Almoço", items: [{ foodId: foodIdByName(db, "Arroz branco cozido"), quantity: 150 }] },
+      ],
+    });
+    const full = getFullPlan(db, planId)!;
+    expect(full.plan).toMatchObject({ name: "Emagrecimento", patient_name: "Maria Silva" });
+    expect(full.meals).toHaveLength(2);
+    const cafe = full.meals.find((m) => m.name === "Café da manhã")!;
+    expect(cafe.items).toHaveLength(2);
+    // valores por referencia vindos do JOIN permitem recalcular
+    expect(cafe.items[0]!.food_name).toBe("Pão francês");
+    expect(cafe.items[0]!.reference_weight).toBe(25);
   });
 });

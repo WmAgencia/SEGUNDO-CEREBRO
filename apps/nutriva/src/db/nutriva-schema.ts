@@ -1,5 +1,12 @@
 import { DatabaseSync } from "node:sqlite";
 
+export function ensureDefaultTenant(db: DatabaseSync): void {
+  db.prepare(
+    `INSERT INTO tenants (id, name, email, crn, status) VALUES (1, 'Nutriva Master', 'wmagenciasuporte@gmail.com', NULL, 'active')
+     ON CONFLICT(id) DO NOTHING`
+  ).run();
+}
+
 export function initNutrivaSchema(db: DatabaseSync): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS tenants (
