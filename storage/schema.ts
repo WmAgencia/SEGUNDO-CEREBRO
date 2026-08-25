@@ -1,4 +1,4 @@
-export const SCHEMA_VERSION = 18;
+export const SCHEMA_VERSION = 19;
 
 export interface Migration {
   from: number;
@@ -61,6 +61,48 @@ const COMM_DDL: readonly string[] = [
 ];
 
 export const SCHEMA_STATEMENTS: readonly string[] = [
+  `CREATE TABLE IF NOT EXISTS projects (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    repository TEXT,
+    repository_url TEXT,
+    workspace TEXT,
+    status TEXT NOT NULL DEFAULT 'planned',
+    priority TEXT NOT NULL DEFAULT 'normal',
+    owner_agent TEXT NOT NULL DEFAULT 'manager',
+    assigned_agents TEXT NOT NULL DEFAULT '[]',
+    environment TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  )`,
+  `CREATE TABLE IF NOT EXISTS agent_task_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    agent_id TEXT NOT NULL,
+    task_id INTEGER,
+    stage TEXT NOT NULL DEFAULT 'step',
+    message TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_task_logs_agent ON agent_task_logs(agent_id, id)`,
+  `INSERT INTO projects (id, name, description, workspace, status, priority)
+   SELECT 'project.nutriva', 'Nutriva', 'SaaS multi-tenant para nutricionistas', 'apps/nutriva', 'active', 'high'
+   WHERE NOT EXISTS (SELECT 1 FROM projects WHERE id = 'project.nutriva')`,
+  `INSERT INTO projects (id, name, description, workspace, status, priority)
+   SELECT 'project.clipcom', 'Clipcom', 'Produto Clipcom', 'apps/clipcom', 'planned', 'normal'
+   WHERE NOT EXISTS (SELECT 1 FROM projects WHERE id = 'project.clipcom')`,
+  `INSERT INTO projects (id, name, description, workspace, status, priority)
+   SELECT 'project.vyntra', 'Vyntra', 'Projeto Vyntra', 'apps/vyntra', 'planned', 'normal'
+   WHERE NOT EXISTS (SELECT 1 FROM projects WHERE id = 'project.vyntra')`,
+  `INSERT INTO projects (id, name, description, workspace, status, priority)
+   SELECT 'project.second-brain', 'Second Brain OS', 'Infraestrutura de memória multiagente', '.', 'active', 'high'
+   WHERE NOT EXISTS (SELECT 1 FROM projects WHERE id = 'project.second-brain')`,
+  `INSERT INTO projects (id, name, description, workspace, status, priority)
+   SELECT 'project.consecom', 'Consecom', 'Operações Consecom', '', 'planned', 'normal'
+   WHERE NOT EXISTS (SELECT 1 FROM projects WHERE id = 'project.consecom')`,
+  `INSERT INTO projects (id, name, description, workspace, status, priority)
+   SELECT 'project.prospector', 'Prospector', 'Prospecção automatizada', '', 'planned', 'low'
+   WHERE NOT EXISTS (SELECT 1 FROM projects WHERE id = 'project.prospector')`,
   ...FTS_TABLES,
   `CREATE TABLE IF NOT EXISTS policies (
     action_type      TEXT PRIMARY KEY,
@@ -796,7 +838,7 @@ export const MIGRATIONS: readonly Migration[] = [
       "CREATE INDEX IF NOT EXISTS idx_task_logs_agent ON agent_task_logs(agent_id, id)",
     ],
   },
-  // v17 bump happened without creating the table on persistent volumes — redo it.
+  // v17 bumpou a versão sem criar a tabela em volumes persistentes — refaz:
   {
     from: 17,
     statements: [
@@ -809,6 +851,26 @@ export const MIGRATIONS: readonly Migration[] = [
         created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
       )`,
       "CREATE INDEX IF NOT EXISTS idx_task_logs_agent ON agent_task_logs(agent_id, id)",
+    ],
+  },
+  {
+    from: 18,
+    statements: [
+      `CREATE TABLE IF NOT EXISTS projects (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        description TEXT NOT NULL DEFAULT '',
+        repository TEXT,
+        repository_url TEXT,
+        workspace TEXT,
+        status TEXT NOT NULL DEFAULT 'planned',
+        priority TEXT NOT NULL DEFAULT 'normal',
+        owner_agent TEXT NOT NULL DEFAULT 'manager',
+        assigned_agents TEXT NOT NULL DEFAULT '[]',
+        environment TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+        updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+      )`,
     ],
   },
 ];

@@ -9,7 +9,7 @@ import { persistGoalKnowledge, persistInitiativeKnowledge } from "../obsidian/kn
 import { createNotification } from "./notifications.ts";
 import { completeWithGateway } from "../ai/model-router.ts";
 import { getAllAgentStates } from "./agent-state.ts";
-import { runInitiativeAutonomously } from "./autonomous-executor.ts";
+import { runInitiativeParallel } from "./orchestrator.ts";
 
 export type ManagerMode = 'plane' | 'brain' | 'build';
 export type ManagerIntent = 'CHAT'|'QUESTION'|'IDEA'|'GOAL_CREATION'|'EXECUTION_CONFIRM'|'STOP'|'RESUME'|'STATUS'|'DIAGNOSIS'|'MODE_SWITCH'|'BRAIN_QUERY'|'IMAGE_REQUEST';
@@ -201,6 +201,100 @@ async function callLLM(config: BrainConfig, s: ManagerSession, userMessage: stri
 
 /* ── DETERMINISTIC FALLBACK (no LLM) ── */
 
+/**
+ * Deterministic operational-status answers from REAL system state.
+ * Returns null when the question is not an operational status query.
+ */
+function answerOperationalStatus(db: DatabaseSync, t: string): string | null {
+  const isQuestion = /\?|como est|qual|quais|quem|o que|quantos|em que etapa|por que|pr[oó]xim/i.test(t);
+  if (!isQuestion) return null;
+
+  // "O que o Developer 01 está fazendo?"
+  if (/o que .* (est[áa]|ta) (fazendo|trabalhando)/i.test(t) || /em que etapa/i.test(t)) {
+    const devMatch = t.match(/developer\s*0?(\d)/i);
+    const token = devMatch ? `developer-0${devMatch[1]}` : (t.match(/(?:o|a)\s+([a-z0-9\- ]+)\s+est/)?.[1]?.trim() ?? "");
+    const agentId = devMatch ? token : (db.prepare("SELECT id FROM agents WHERE id LIKE ? OR LOWER(name) LIKE ?").get(`%${token}%`, `%${token}%`) as {id:string}|undefined)?.id;
+    if (!agentId) return null;
+    const task = db.prepare("SELECT title,status FROM initiative_tasks WHERE assigned_agent=? AND status IN ('RUNNING','ASSIGNED','READY','WAITING') ORDER BY id DESC LIMIT 1").get(agentId) as {title:string;status:string}|undefined;
+    const lastLog = db.prepare("SELECT stage,message,created_at FROM agent_task_logs WHERE agent_id=? ORDER BY id DESC LIMIT 1").get(agentId) as {stage:string;message:string;created_at:string}|undefined;
+    if (!task && !lastLog) return `${agentId}: sem tarefas atribuídas no momento (disponível).`;
+    const parts = [`${agentId}:`];
+    if (task) parts.push(`task "${task.title}" (${task.status}).`);
+    if (lastLog) parts.push(`Última etapa [${lastLog.stage}] às ${lastLog.created_at.slice(11,19)}: ${lastLog.message}`);
+    return parts.join(" ");
+  }
+
+  // "Quais projetos estão bloqueados?"
+  if (/bloquead/i.test(t)) {
+    const blocked = db.prepare(
+      `SELECT DISTINCT p.name AS pname FROM projects p
+       JOIN initiatives i ON i.project = REPLACE(p.id,'project.','')
+       JOIN initiative_tasks t ON t.initiative_id = i.id AND t.status='BLOCKED'`
+    ).all() as Array<{pname:string}>;
+    return blocked.length
+      ? `Projetos com tarefas bloqueadas: ${blocked.map((b)=>b.pname).join(", ")}.`
+      : "Nenhum projeto com tarefas bloqueadas agora.";
+  }
+
+  // "Quem está trabalhando?"
+  if (/quem\s+(est[áa]\s+)?(trabalhando|ocupado|executando)/i.test(t)) {
+    const rows = db.prepare("SELECT agent_id,title FROM initiative_tasks WHERE status='RUNNING' ORDER BY id").all() as Array<{agent_id:string;title:string}>;
+    return rows.length ? rows.map((r)=>`${r.agent_id} → "${r.title}"`).join(" | ") : "Ninguém executando neste momento.";
+  }
+
+  // "Quais agentes estão disponíveis?"
+  if (/dispon[íi]ve/i.test(t)) {
+    const rows = db.prepare(
+      `SELECT a.id,a.name FROM agents a
+       WHERE a.status IN ('IDLE','AVAILABLE')
+         AND NOT EXISTS (SELECT 1 FROM initiative_tasks t WHERE t.assigned_agent=a.id AND t.status IN ('RUNNING','ASSIGNED'))
+       ORDER BY a.id`
+    ).all() as Array<{id:string;name:string}>;
+    return rows.length ? `Disponíveis: ${rows.map((r)=>`${r.name} (${r.id})`).join(", ")}.` : "Nenhum agente livre agora.";
+  }
+
+  // "O que foi concluído hoje?"
+  if (/conclu[íi]d|entregue hoje|feito hoje/i.test(t)) {
+    const rows = db.prepare(
+      `SELECT title,assigned_agent FROM initiative_tasks
+       WHERE status='COMPLETED' AND completed_at >= date('now') ORDER BY completed_at DESC LIMIT 10`
+    ).all() as Array<{title:string;assigned_agent:string|null}>;
+    return rows.length ? `Concluído hoje (${rows.length}): ${rows.map((r)=>`"${r.title}"${r.assigned_agent?` por ${r.assigned_agent}`:""}`).join("; ")}.` : "Nada concluído ainda hoje.";
+  }
+
+  // "Qual é a próxima ação?"
+  if (/pr[oó]xim(a|o)\s+a[çc]/i.test(t)) {
+    const row = db.prepare(
+      `SELECT title, assigned_agent FROM initiative_tasks
+       WHERE status='READY' ORDER BY CASE WHEN priority IS NULL THEN 1 ELSE 0 END, priority DESC, ordinal LIMIT 1`
+    ).get() as {title:string;assigned_agent:string|null}|undefined;
+    if (!row) return "Fila vazia — nenhuma ação pronta para execução.";
+    return `Próxima ação: "${row.title}"${row.assigned_agent?` (agente: ${row.assigned_agent})`:""}.`;
+  }
+
+  // "Como está o projeto X?" / "O que aconteceu com o Clipcom?"
+  const projMatch = t.match(/(?:aconteceu com o|aconteceu com a|etapa d[oe]|estado d[oe]|andamento d[oe]|sobre o|sobre a)\s+([a-z0-9\- ]{3,40})/i)
+    ?? t.match(/(?:clipcom|vyntra|nutriva|consecom|prospector)/i);
+  if (projMatch) {
+    const raw = (projMatch[1]?.trim() ?? projMatch[0]).split(" ").slice(-1)[0];
+    const row = db.prepare(
+      `SELECT p.name AS pname, t.title, t.status, t.assigned_agent FROM projects p
+       JOIN initiatives i ON i.project = REPLACE(p.id,'project.','')
+       JOIN initiative_tasks t ON t.initiative_id = i.id
+       WHERE LOWER(p.name) LIKE ? OR p.description LIKE ?
+       ORDER BY t.updated_at DESC LIMIT 4`
+    ).all(`%${raw}%`, `%${raw}%`) as Array<{pname:string;title:string;status:string;assigned_agent:string|null}>;
+    if (row.length) {
+      const done = row.filter((r)=>r.status==="COMPLETED").length;
+      const parts = [`Projeto ${row[0]!.pname}: ${done}/${row.length} atividades recentes concluídas.`];
+      for (const r of row) parts.push(`"${r.title}" (${r.status}${r.assigned_agent?`, ${r.assigned_agent}`:""})`);
+      return parts.join(" ");
+    }
+  }
+
+  return null;
+}
+
 function fallbackResponse(config: BrainConfig, text: string, s: ManagerSession): ManagerResponse {
   const t = text.trim().toLowerCase().replace(/[.!?]+$/,'');
   const db = new DatabaseSync(config.dbPath);
@@ -209,6 +303,9 @@ function fallbackResponse(config: BrainConfig, text: string, s: ManagerSession):
   const lastManagerMsg = s.history.filter(h => h.role === 'manager').slice(-1)[0]?.text ?? '';
 
   try {
+    // ── STATUS OPERACIONAL (dados reais do sistema, determinístico) ──
+    const statusAnswer = answerOperationalStatus(db, t);
+    if (statusAnswer) return resp(s, statusAnswer);
     // ── GREETINGS (including variants with spaces) ──
     if (/^(oi+|olá|ola|hey|e\s+a[íi]|eai|e\s+ai|bom dia|boa tarde|boa noite|opa|fala)\b/i.test(t))
       return resp(s, 'Oi! Sou o Gerente. Posso conversar sobre estratégia, criar objetivos, consultar o Second Brain e coordenar os agentes. Sobre o que quer falar?');
@@ -558,7 +655,7 @@ function executeRealPlan(config: BrainConfig, s: ManagerSession): ManagerRespons
 
     // Auto-execute the dispatched task (skip under tests)
     if (!process.env.VITEST && ready[0] !== undefined) {
-      void runInitiativeAutonomously(config, init.id, '').catch(() => {});
+      void runInitiativeParallel(config, init.id).catch(() => {});
     }
 
     const agentLabel = assignedAgent === 'designer-agent' ? 'Designer Agent' : 'Engineering Agent';
@@ -645,7 +742,7 @@ function doExecute(config: BrainConfig, s: ManagerSession): ManagerResponse {
     if (ready[0]!==undefined) assignTask(db, ready[0], { agentId:isDesignPlan?'designer-agent':isProjectRecord?'engineering-agent':'manager', reason:'Manager delegou primeira task' });
     persistInitiativeKnowledge(config, goal, init, plan.tasks);
     if (!process.env.VITEST && ready[0] !== undefined) {
-      void runInitiativeAutonomously(config, init.id, '').catch(() => {});
+      void runInitiativeParallel(config, init.id).catch(() => {});
     }
     s.pending = null; s.lastPlanSummary = plan.goalName;
     const agentLabel = isDesignPlan ? 'Designer Agent' : isProjectRecord ? 'Engineering Agent' : 'agente responsável';

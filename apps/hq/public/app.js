@@ -121,8 +121,20 @@ async function openProfile(aid){
     if(!p?.agent){$('profile-content').innerHTML='<p class="muted">Não encontrado.</p>';return}
     let dm=[];try{dm=JSON.parse(p.agent.domains??'[]')}catch{}
     const role=AGENT_ROLES[aid]||esc(p.department||dm.join(', ')||'—');
+    const live=p.live||{};
+    const liveHtml=`
+      <div class="p-sec"><h4>Execução ao vivo</h4>
+        ${live.currentTask?`<p class="p-item" style="margin:0 0 6px">📋 <b>${esc(live.currentTask)}</b></p>`:''}
+        ${live.etapa?`<p class="muted-sm">Etapa: <b>${esc(String(live.etapa))}</b></p>`:''}
+        ${live.progressPct!=null?`<div class="progress-wrap"><div class="progress-bar"><i style="width:${live.progressPct}%"></i></div><span class="muted-sm">${live.progressPct}% da iniciativa</span></div>`:''}
+        ${live.lastAction?`<p class="muted-sm" style="margin-top:6px">Última ação: ${esc(String(live.lastAction).slice(0,90))}</p>`:''}
+        ${live.nextAction?`<p class="muted-sm">Próxima: ${esc(String(live.nextAction).slice(0,70))}</p>`:''}
+        ${live.blockers?`<p style="color:#ff8f96;font-weight:600">⛔ ${live.blockers} bloqueio(s)</p>`:''}
+        ${!live.currentTask&&!live.lastAction?'<p class="muted">Disponível — sem trabalho atribuído.</p>':''}
+      </div>`;
     $('profile-content').innerHTML=`
       <div class="p-sec"><h4>${esc(p.agent.name)}</h4><p class="p-role">${esc(role)}</p><p style="margin-top:4px;font-size:13px">${esc(stPt(p.agent.status))}</p></div>
+      ${liveHtml}
       <div class="p-sec"><h4>Tarefas</h4>${(p.tasks??[]).map(t=>`<div class="p-item"><b>${esc(t.title)}</b><small>${esc(stPt(t.status))}</small></div>`).join('')||'<p class="muted">Nenhuma.</p>'}</div>
       <div class="p-sec"><h4>Handoffs</h4>${(p.handoffs??[]).map(h=>`<div class="p-item">${esc(h.from_agent)} → ${esc(h.to_agent)}<small>${esc(h.summary.slice(0,50))}</small></div>`).join('')||'<p class="muted">Nenhum.</p>'}</div>
       <div class="p-sec"><h4>Runs</h4>${(p.runs??[]).map(r=>`<div class="p-item">${esc(r.id.slice(0,22))}<small>${esc(r.state)}</small></div>`).join('')||'<p class="muted">Nenhum.</p>'}</div>`;

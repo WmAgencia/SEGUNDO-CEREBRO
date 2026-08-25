@@ -101,6 +101,9 @@ button{font-family:var(--sans);cursor:pointer;border:none;background:none;color:
 .log-stage.generate,.log-stage.opencode{background:#2b2410;color:#ffd98a}
 #agent-rename-input{background:#0b1219;border:1px solid #1e2c38;color:#dbe9f5;border-radius:8px;padding:8px 10px;font:13px var(--font);flex:1;min-width:0}
 .p-role{color:#9db8cc;font-size:12.5px;margin-top:3px;font-weight:500}
+.progress-wrap{margin:8px 0}
+.progress-bar{height:8px;background:#14212d;border-radius:99px;overflow:hidden;border:1px solid #1e2c38}
+.progress-bar i{display:block;height:100%;background:linear-gradient(90deg,#2e9e68,#54b48c);border-radius:99px;transition:width .4s ease}
 
 .decor.wa-computer{width:32px;height:22px;background:linear-gradient(145deg,#3b4b63,#232f42);border:1px solid #55719c;border-radius:4px;cursor:pointer;z-index:5;box-shadow:0 3px 10px rgba(0,0,0,.4),inset 0 1px 0 rgba(255,255,255,.08);animation:waglow 2.4s ease-in-out infinite}
 .decor.wa-computer::after{content:'';position:absolute;bottom:-5px;left:50%;transform:translateX(-50%);width:14px;height:4px;background:#39506e;border-radius:1px}

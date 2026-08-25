@@ -12,6 +12,12 @@ export const SPECIALIZED_AGENTS: readonly SpecializedAgentDefinition[] = [
   { id: "sales-agent-03", name: "Atendente 3", department: "COMERCIAL", responsibilities: ["atendimento", "follow-up"], permissions: ["context"] },
   { id: "sales-agent-04", name: "Atendente 4", department: "COMERCIAL", responsibilities: ["atendimento", "follow-up"], permissions: ["context"] },
   { id: "engineering-agent", name: "Engenharia", department: "DESENVOLVIMENTO", responsibilities: ["implementação", "testes"], permissions: ["context", "execute"] },
+  { id: "developer-01", name: "Developer 01", department: "DESENVOLVIMENTO", responsibilities: ["desenvolvimento paralelo"], permissions: ["context", "execute"] },
+  { id: "developer-02", name: "Developer 02", department: "DESENVOLVIMENTO", responsibilities: ["desenvolvimento paralelo"], permissions: ["context", "execute"] },
+  { id: "developer-03", name: "Developer 03", department: "DESENVOLVIMENTO", responsibilities: ["desenvolvimento paralelo"], permissions: ["context", "execute"] },
+  { id: "developer-04", name: "Developer 04", department: "DESENVOLVIMENTO", responsibilities: ["desenvolvimento paralelo"], permissions: ["context", "execute"] },
+  { id: "qa-agent", name: "QA", department: "QUALIDADE", responsibilities: ["validação independente", "rework"], permissions: ["context", "execute", "review"] },
+  { id: "integrator-agent", name: "Integrador", department: "INTEGRAÇÃO", responsibilities: ["integração e quality gate final"], permissions: ["context", "execute"] },
   { id: "maintenance-agent", name: "Manutenção", department: "MANUTENÇÃO", responsibilities: ["limpeza", "saúde"], permissions: ["context"] },
 ];
 

@@ -5,7 +5,7 @@ import { listAgents, upsertAgent } from "../agents/agent-runtime.ts";
 import { buildWorldState } from "../agents/world-state.ts";
 import { persistGoalKnowledge, persistInitiativeKnowledge } from "../obsidian/knowledge-records.ts";
 import { createInitiative, planInitiative } from "../goals/initiatives.ts";
-import { refreshQueue, assignTask, createHandoff, acceptHandoff } from "../agents/agent-os.ts";
+import { refreshQueue, assignTask, createHandoff, acceptHandoff, agentPerformance } from "../agents/agent-os.ts";
 import { SPECIALIZED_AGENTS } from "../agents/specialized.ts";
 import { setKillSwitch } from "../autonomous/cycle.ts";
 import { OFFICE_DEPARTMENTS, deskPosition, departmentForAgent, officeBounds } from "./office.ts";
@@ -56,9 +56,11 @@ export function getHqSnapshot(config: BrainConfig): HqSnapshot {
 }
 
 function ensureHqAgents(db: DatabaseSync): void {
+  const CAPACITY_ONE = new Set(["developer-01", "developer-02", "developer-03", "developer-04", "qa-agent", "integrator-agent"]);
   for (const definition of SPECIALIZED_AGENTS) {
     if (db.prepare("SELECT id FROM agents WHERE id=?").get(definition.id)) continue;
     upsertAgent(db, { id: definition.id, name: definition.name, description: `${definition.department} do Second Brain HQ.`, domains: [definition.id === "manager" ? "management" : definition.department.toLowerCase()], capabilities: definition.responsibilities, permissions: definition.permissions, status: "AVAILABLE" });
+    if (CAPACITY_ONE.has(definition.id)) db.prepare("UPDATE agents SET capacity=1 WHERE id=?").run(definition.id);
   }
 }
 
@@ -146,7 +148,40 @@ export function agentProfile(config: BrainConfig, agentId: string): Record<strin
     const results = db.prepare("SELECT id,task_id,status,summary,confidence,created_at FROM agent_results WHERE agent_id=? ORDER BY id DESC LIMIT 10").all(agentId);
     const handoffs = db.prepare("SELECT id,from_agent,to_agent,summary,status,created_at FROM handoffs WHERE from_agent=? OR to_agent=? ORDER BY id DESC LIMIT 10").all(agentId, agentId);
     const runs = db.prepare("SELECT id,state,current_step,retry_count,updated_at FROM agent_runs WHERE agent_id=? ORDER BY updated_at DESC LIMIT 5").all(agentId);
-    return { agent, department: departmentForAgent(agentId)?.label ?? null, position: deskPosition(agentId), tasks, results, handoffs, runs };
+
+    // ── Live operational context ──
+    const currentTask = tasks.find((t) => ["RUNNING", "ASSIGNED", "READY"].includes(String(t.status))) ?? null;
+    const lastLog = db.prepare("SELECT stage,message,created_at FROM agent_task_logs WHERE agent_id=? ORDER BY id DESC LIMIT 1").get(agentId) as { stage: string; message: string; created_at: string } | undefined;
+    const nextAction = db.prepare(
+      `SELECT title FROM initiative_tasks WHERE assigned_agent=? AND status='READY'
+       ORDER BY CASE WHEN priority IS NULL THEN 1 ELSE 0 END, priority DESC, ordinal LIMIT 1`
+    ).get(agentId) as { title: string } | undefined;
+    const blockers = db.prepare("SELECT COUNT(*) AS n FROM initiative_tasks WHERE assigned_agent=? AND status='BLOCKED'").get(agentId) as { n: number };
+    let progressPct: number | null = null;
+    if (currentTask) {
+      const taskIdNum = Number(currentTask.id as number);
+      const initId = (db.prepare("SELECT initiative_id FROM initiative_tasks WHERE id=?").get(taskIdNum) as { initiative_id: string } | undefined)?.initiative_id;
+      if (initId) {
+        const tot = Number((db.prepare("SELECT COUNT(*) AS n FROM initiative_tasks WHERE initiative_id=? AND status NOT IN ('CANCELLED')").get(String(initId)) as { n: number }).n);
+        const comp = Number((db.prepare("SELECT COUNT(*) AS n FROM initiative_tasks WHERE initiative_id=? AND status='COMPLETED'").get(String(initId)) as { n: number }).n);
+        progressPct = tot > 0 ? Math.round((comp / tot) * 100) : null;
+      }
+    }
+    const perf = agentPerformance(db, agentId);
+
+    return {
+      agent, department: departmentForAgent(agentId)?.label ?? null, position: deskPosition(agentId),
+      tasks, results, handoffs, runs,
+      live: {
+        etapa: lastLog?.stage ?? (currentTask ? String(currentTask.status).toLowerCase() : null),
+        currentTask: currentTask?.title ?? null,
+        progressPct,
+        lastAction: lastLog?.message ?? null,
+        nextAction: nextAction?.title ?? null,
+        blockers: blockers.n,
+        performance: perf,
+      },
+    };
   } finally { db.close(); }
 }
 
