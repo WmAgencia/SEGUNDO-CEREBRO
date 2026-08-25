@@ -134,89 +134,125 @@ function fallbackResponse(config: BrainConfig, text: string, s: ManagerSession):
   const t = text.trim().toLowerCase().replace(/[.!?]+$/,'');
   const db = new DatabaseSync(config.dbPath);
 
-  try {
-    // Greetings
-    if (/^(oi|olá|ola|hey|e aí|eai|bom dia|boa tarde|boa noite)\b/i.test(t))
-      return resp(s, 'Olá! Sou o Gerente. Posso conversar sobre estratégia, criar objetivos, consultar o Second Brain e coordenar os agentes. Sobre o que quer falar?');
+  // Anti-loop: if this exact message was the last one, and we're about to repeat, change behavior
+  const lastManagerMsg = s.history.filter(h => h.role === 'manager').slice(-1)[0]?.text ?? '';
 
-    if (/(tudo bem|tudo certo|como vai)/i.test(t))
+  try {
+    // ── GREETINGS (including variants with spaces) ──
+    if (/^(oi+|olá|ola|hey|e\s+a[íi]|eai|e\s+ai|bom dia|boa tarde|boa noite|opa|fala)\b/i.test(t))
+      return resp(s, 'Oi! Sou o Gerente. Posso conversar sobre estratégia, criar objetivos, consultar o Second Brain e coordenar os agentes. Sobre o que quer falar?');
+
+    if (/(tudo bem|tudo certo|como vai|como você está|belez)/i.test(t))
       return resp(s, 'Tudo funcionando. Tenho acesso ao banco de dados, aos agentes e ao Second Brain. O que você quer fazer?');
 
-    if (/^(ei|oie|eai|hey|opa)\b/i.test(t))
-      return resp(s, 'Oi! O que você precisa?');
+    // ── AFFIRMATIVE WITHOUT PENDING PLAN ──
+    // User says "sim" but there's no pending plan → check if we can aprofunde or execute last context
+    if (/^(sim|pode|executa|manda ver|vai|confirmo|go|beleza|ok|okay)\b/i.test(t) && !s.pending) {
+      if (s.lastBrainResult) {
+        // User is confirming "aprofunde" — actually do it
+        const deep = db.prepare("SELECT content FROM memories_fts WHERE memories_fts MATCH ? LIMIT 8").all(`"${s.topic ?? 'nutriva'}"`) as unknown as Array<{content:string}>;
+        const tasks = db.prepare("SELECT title,status FROM initiative_tasks ORDER BY id DESC LIMIT 10").all() as unknown as Array<{title:string;status:string}>;
+        const parts: string[] = [];
+        if (deep.length) parts.push(`Contexto do Second Brain:\n${deep.map(m=>`• ${m.content.slice(0,180)}`).join('\n')}`);
+        if (tasks.length) parts.push(`Tarefas:\n${tasks.map(t=>`• ${t.title} (${t.status})`).join('\n')}`);
+        if (parts.length) {
+          const result = parts.join('\n\n');
+          s.lastBrainResult = result;
+          return resp(s, `Aprofundando sobre ${s.topic ?? 'o tópico'}:\n\n${result}\n\nQuer que eu transforme isso em um plano de ação?`);
+        }
+      }
+      // Nothing to confirm or expand
+      return resp(s, 'Não tenho um plano pendente para confirmar. Se você quiser, posso criar um objetivo, consultar o Second Brain ou verificar o status dos agentes. O que você quer fazer?');
+    }
 
-    // Follow-up: aprofundar
-    if (/(aprofund|expand|detalh|mais sobre)/i.test(t) && s.lastBrainResult)
-      return resp(s, `Aprofundando sobre ${s.topic ?? 'o tópico'}:\n\n${s.lastBrainResult.slice(0,600)}\n\nQuer que eu transforme isso em um plano?`);
+    // ── NEGATIVE WITHOUT PENDING PLAN ──
+    if (/^(não|nao|deixa|depois|cancela|para)\b/i.test(t) && !s.pending)
+      return resp(s, 'Ok. Podemos conversar sobre outra coisa ou criar um novo objetivo. O que você prefere?');
 
-    // Follow-up: "e o que falta?"
-    if (/(o que falta|o que falta fazer|próximos passos|o que ainda)/i.test(t)) {
+    // ── FOLLOW-UP: aprofundar ──
+    if (/(aprofund|expand|detalh|mais sobre|me conta mais)/i.test(t)) {
+      if (s.lastBrainResult) {
+        const deep = db.prepare("SELECT content FROM memories_fts WHERE memories_fts MATCH ? LIMIT 8").all(`"${s.topic ?? 'nutriva'}"`) as unknown as Array<{content:string}>;
+        const parts: string[] = [];
+        if (deep.length) parts.push(`Mais contexto:\n${deep.map(m=>`• ${m.content.slice(0,180)}`).join('\n')}`);
+        if (parts.length) return resp(s, `Aprofundando sobre ${s.topic ?? 'o tópico'}:\n\n${parts.join('\n\n')}\n\nQuer que eu transforme em um plano?`);
+      }
+      return resp(s, `Não tenho mais detalhes armazenados sobre ${s.topic ?? 'isso'} no momento. Quer que eu crie um objetivo para investigar mais a fundo?`);
+    }
+
+    // ── FOLLOW-UP: "e o que falta?" ──
+    if (/(o que falta|próximos passos|o que ainda|o que precisa)/i.test(t)) {
       if (s.topic) {
         const tasks = db.prepare("SELECT title,status FROM initiative_tasks WHERE status NOT IN ('COMPLETED','CANCELLED') ORDER BY id DESC LIMIT 10").all() as unknown as Array<{title:string;status:string}>;
         if (tasks.length) return resp(s, `O que ainda está em aberto:\n${tasks.map(t=>`• ${t.title} (${t.status})`).join('\n')}`);
       }
       const w = buildWorldState(config);
-      return resp(s, `Tarefas abertas: ${w.counts['initiative_tasks'] ?? 0}. Runs ativos: ${w.activeRuns.length}. Quer detalhes?`);
+      return resp(s, `Tarefas abertas: ${w.counts['initiative_tasks'] ?? 0}. Runs ativos: ${w.activeRuns.length}.`);
     }
 
-    // Follow-up: "o que está pronto?"
-    if (/(o que está pronto|o que já foi|o que temos|o que existe)/i.test(t)) {
+    // ── FOLLOW-UP: "o que está pronto?" / "o que temos?" ──
+    if (/(o que está pronto|o que já foi|o que temos|o que existe|o que já)/i.test(t)) {
       const topic = s.topic;
       if (topic) {
         const done = db.prepare("SELECT title FROM initiative_tasks WHERE status='COMPLETED' ORDER BY completed_at DESC LIMIT 8").all() as unknown as Array<{title:string}>;
         const mems = db.prepare("SELECT content FROM memories_fts WHERE memories_fts MATCH ? LIMIT 5").all(`"${topic}"`) as unknown as Array<{content:string}>;
         const parts: string[] = [];
         if (done.length) parts.push(`Concluído:\n${done.map(d=>`✅ ${d.title}`).join('\n')}`);
-        if (mems.length) parts.push(`Contexto do Second Brain:\n${mems.map(m=>`• ${m.content.slice(0,150)}`).join('\n')}`);
-        if (parts.length) return resp(s, `Sobre ${topic}:\n\n${parts.join('\n\n')}\n\nQuer que eu aprofunde ou transforme em plano?`);
+        if (mems.length) parts.push(`Contexto do Second Brain:\n${mems.map(m=>`• ${m.content.slice(0,180)}`).join('\n')}`);
+        if (parts.length) {
+          const result = parts.join('\n\n');
+          s.lastBrainResult = result;
+          return resp(s, `Sobre ${topic}:\n\n${result}\n\nQuer que eu aprofunde ou transforme em plano?`);
+        }
       }
     }
 
-    // Follow-up: "e o marketing?" / "e o comercial?"
-    const deptMatch = t.match(/e (o|a) (marketing|comercial|prospec|desenvolv|manuten)/i);
+    // ── FOLLOW-UP: "e o marketing?" etc ──
+    const deptMatch = t.match(/e (o|a) (marketing|comercial|prospec|desenvolv|manuten|nutriva|vyntra)/i);
     if (deptMatch) {
       const dept = deptMatch[2] ?? '';
+      s.topic = dept;
       const agents = db.prepare("SELECT id,status FROM agents WHERE domains LIKE ? OR id LIKE ?").all(`%${dept}%`, `%${dept}%`) as unknown as Array<{id:string;status:string}>;
       if (agents.length) return resp(s, `Sobre ${dept}:\n${agents.map(a=>`• ${a.id}: ${a.status}`).join('\n')}`);
     }
 
-    // Nutriva query
+    // ── NUTRIVA ──
     if (/(nutriva)/i.test(t)) {
       s.topic = 'nutriva';
       const done = db.prepare("SELECT title FROM initiative_tasks WHERE status='COMPLETED' ORDER BY completed_at DESC LIMIT 10").all() as unknown as Array<{title:string}>;
       const mems = db.prepare("SELECT content FROM memories_fts WHERE memories_fts MATCH 'nutriva' LIMIT 5").all() as unknown as Array<{content:string}>;
       const parts: string[] = [];
       if (done.length) parts.push(`Concluído:\n${done.map(d=>`✅ ${d.title}`).join('\n')}`);
-      if (mems.length) parts.push(`Contexto:\n${mems.map(m=>`• ${m.content.slice(0,150)}`).join('\n')}`);
-      const result = parts.length ? parts.join('\n\n') : 'Nutriva tem nutrition engine, banco de alimentos, patient CRUD e tenant isolation. Ainda faltam frontend completo, substitution engine, PDF e recipe engine.';
+      if (mems.length) parts.push(`Contexto:\n${mems.map(m=>`• ${m.content.slice(0,180)}`).join('\n')}`);
+      const result = parts.length ? parts.join('\n\n') : 'O Nutriva tem nutrition engine determinístico, banco de 30 alimentos, patient CRUD com tenant isolation, meal plan API e schema próprio (v1). Ainda faltam: frontend completo, substitution engine, PDF generation, recipe engine e WhatsApp delivery.';
       s.lastBrainResult = result;
-      return resp(s, result);
+      return resp(s, `Sobre o Nutriva:\n\n${result}\n\nQuer que eu aprofunde algum ponto ou transforme em plano?`);
     }
 
-    // Prospecção
+    // ── PROSPECÇÃO ──
     if (/(prospec|prospecção|leads)/i.test(t)) {
       s.topic = 'prospecção';
       return resp(s, 'Sobre prospecção — temos o Prospector e o time Comercial. Podemos aumentar volume de leads, melhorar qualificação, ou os dois. Qual direção te interessa?');
     }
 
-    // Idea / discussion
+    // ── IDEA ──
     if (/(pensando|ideia|que tal|e se|imagina|talvez)/i.test(t)) {
       s.topic = text.slice(0, 50);
       return resp(s, 'Boa ideia. Posso consultar o Second Brain para ver o que já temos e montar uma estratégia. Quer que eu aprofunde ou transforme em objetivo?');
     }
 
-    // Image request
+    // ── IMAGE ──
     if (/(faz|crie|gere|gerar)\s+(uma?\s+)?(imagem|foto|desenho)/i.test(t))
-      return resp(s, 'Consigo preparar a geração, mas nenhum provider de imagem está configurado no momento. Configure OPENROUTER_API_KEY ou um provider de imagem para habilitar essa capacidade.');
+      return resp(s, 'Consigo preparar a geração, mas nenhum provider de imagem está configurado. Configure OPENROUTER_API_KEY para habilitar.');
 
-    // Pending confirmation
+    // ── PENDING CONFIRMATION ──
     if (s.pending && /^(sim|pode|executa|manda ver|vai|confirmo|go)\b/i.test(t)) return doExecute(config, s);
     if (s.pending && /^(não|nao|deixa|depois|cancela)\b/i.test(t)) {
       s.pending = null;
       return resp(s, 'Plano cancelado. Podemos conversar sobre outra coisa.');
     }
 
-    // Goal creation
+    // ── GOAL CREATION ──
     if (/(quero|precisamos|preciso)\s+(de\s+)?(faturar|alcançar|vender|criar)\s+/i.test(t) || /r\$\s*[\d.,]+/i.test(t)) {
       const plan = extractPlan(text);
       s.pending = plan;
@@ -224,21 +260,26 @@ function fallbackResponse(config: BrainConfig, text: string, s: ManagerSession):
       return { type:'plan', mode:s.mode, message:`Entendi. Vou criar o objetivo "${plan.goalName}"${target?` (${target})`:''} com ${plan.tasks.length} tarefas:\n\n${plan.tasks.map((t,i)=>`${i+1}. ${t}`).join('\n')}\n\nPosso criar e distribuir?`, intent:'GOAL_CREATION', actions:[{type:'create_goal',status:'proposed'}], requiresConfirmation:true };
     }
 
-    // Status
+    // ── STATUS ──
     if (/(status|progresso|situação|como estamos|como está|prioridade)/i.test(t)) {
       const w = buildWorldState(config);
       return { type:'status', mode:s.mode, message:`${w.counts['goals']??0} goals, ${w.counts['initiative_tasks']??0} tarefas, ${w.activeRuns.length} runs ativos.`, intent:'STATUS', actions:[], requiresConfirmation:false };
     }
 
-    // STOP/RESUME
+    // ── STOP/RESUME ──
     if (/^(pare tudo|para tudo|kill)/i.test(t)) return doStop(config, s);
     if (/^(continue|retomar|resume)$/i.test(t)) return doResume(config, s);
 
-    // Generic follow-up with topic context
-    if (s.topic) return resp(s, `Sobre ${s.topic} — quer que eu aprofunde, transforme em plano, ou consulte o Second Brain para mais detalhes?`);
+    // ── GENERIC (with anti-loop) ──
+    if (s.topic) {
+      // If the last manager message was the same generic topic prompt, try a different angle
+      if (lastManagerMsg.includes(`Sobre ${s.topic}`)) {
+        return resp(s, `Sobre ${s.topic} — posso criar um objetivo, consultar o Second Brain para mais detalhes, ou verificar o status das tarefas. O que você prefere?`);
+      }
+      return resp(s, `Sobre ${s.topic} — quer que eu aprofunde, transforme em plano, ou consulte o Second Brain?`);
+    }
 
-    // Last resort
-    return resp(s, 'Entendi. Posso ajudar de forma mais específica se você me disser o que quer fazer: criar um objetivo, consultar um projeto, conversar sobre estratégia ou verificar o status do sistema.');
+    return resp(s, 'Entendi. Posso ajudar de forma mais específica se você me disser o que quer: criar um objetivo, consultar um projeto, verificar status, ou conversar sobre estratégia.');
   } finally { db.close(); }
 }
 
