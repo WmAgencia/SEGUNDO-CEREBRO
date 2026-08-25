@@ -3,6 +3,17 @@ import { DatabaseSync } from "node:sqlite";
 import { readFileSync, existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+
+// Load .env.local before anything else
+const envPath = path.resolve(process.cwd(), ".env.local");
+if (existsSync(envPath)) {
+  for (const line of readFileSync(envPath, "utf8").split(/\r?\n/)) {
+    const match = line.match(/^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/);
+    if (match?.[1] && match[2] !== undefined && !process.env[match[1]]) process.env[match[1]] = match[2].trim();
+  }
+}
+console.log(`[env] OPENROUTER_API_KEY=${process.env.OPENROUTER_API_KEY ? "present" : "MISSING"}`);
+
 import { loadConfig } from "../../core/config/loader.ts";
 import { openDatabase, applySchema } from "../../storage/connection.ts";
 import { getHqSnapshot, executeHqCommand, dispatchInitiative, requestHandoff, agentProfile, progressSummary } from "../../core/hq/hq-api.ts";

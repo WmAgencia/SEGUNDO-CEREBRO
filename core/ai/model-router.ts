@@ -6,12 +6,12 @@ export interface ModelRoute { provider: string; model: string; reason: string; e
 export interface ModelSelection { agent?: string; task?: string; workload?: ModelWorkload; complexity?: "low" | "medium" | "high"; latencyBudgetMs?: number; costBudget?: number; requiredCapabilities?: string[]; }
 
 const ROUTES: Record<ModelWorkload, { model: string; fallbacks: string[]; reason: string }> = {
-  fast: { model: "google/gemini-2.5-flash-lite", fallbacks: ["meta-llama/llama-3.3-8b-instruct:free"], reason: "classificação rápida" },
-  chat: { model: "openai/gpt-4o-mini", fallbacks: ["google/gemini-2.5-flash-lite", "meta-llama/llama-3.3-8b-instruct:free"], reason: "conversa de baixa latência" },
-  reasoning: { model: "deepseek/deepseek-r1", fallbacks: ["qwen/qwen3.5-plus", "openai/gpt-5-mini"], reason: "planejamento e raciocínio" },
-  research: { model: "google/gemini-2.5-flash", fallbacks: ["deepseek/deepseek-v4-flash", "meta-llama/llama-3.3-70b-instruct:free"], reason: "pesquisa com contexto amplo" },
-  coding: { model: "qwen/qwen3-coder", fallbacks: ["deepseek/deepseek-v3.2", "openai/gpt-5-codex"], reason: "implementação e revisão de código" },
-  vision: { model: "google/gemini-2.5-flash", fallbacks: ["openai/gpt-4o"], reason: "imagem e visão" },
+  fast: { model: "openai/gpt-4.1-nano", fallbacks: ["openai/gpt-4.1-mini", "google/gemini-3.7-flash"], reason: "classificação rápida" },
+  chat: { model: "openai/gpt-4.1-mini", fallbacks: ["openai/gpt-4.1", "google/gemini-3.7-flash"], reason: "conversa de baixa latência" },
+  reasoning: { model: "openai/gpt-4.1", fallbacks: ["anthropic/claude-sonnet-5", "google/gemini-3.7-flash"], reason: "planejamento e raciocínio" },
+  research: { model: "google/gemini-3.7-flash", fallbacks: ["openai/gpt-4.1-mini"], reason: "pesquisa com contexto amplo" },
+  coding: { model: "openai/gpt-4.1", fallbacks: ["anthropic/claude-sonnet-5"], reason: "implementação e revisão de código" },
+  vision: { model: "openai/gpt-4.1", fallbacks: ["google/gemini-3.7-flash"], reason: "imagem e visão" },
   image: { model: "openai/gpt-image-1", fallbacks: [], reason: "geração de imagem" },
 };
 

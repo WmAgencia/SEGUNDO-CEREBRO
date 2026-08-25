@@ -124,8 +124,12 @@ async function callLLM(config: BrainConfig, s: ManagerSession, userMessage: stri
   ];
   try {
     const result = await completeWithGateway(null, { messages, maxTokens: 800, temperature: 0.3 }, { workload: 'reasoning', agent: 'manager', task: userMessage });
+    console.log(`[manager] LLM responded via ${result.provider}/${result.model} (${result.latencyMs}ms)`);
     return result.content;
-  } catch { return null; }
+  } catch (error) {
+    console.error(`[manager] LLM call failed: ${error instanceof Error ? error.message : String(error)}`);
+    return null;
+  }
 }
 
 /* ── DETERMINISTIC FALLBACK (no LLM) ── */
