@@ -208,7 +208,14 @@ async function callLLM(config: BrainConfig, s: ManagerSession, userMessage: stri
 /** Wrapper used by managerChat: opens the DB and tries the deterministic status answer first. */
 function tryAnswerStatus(config: BrainConfig, t: string): string | null {
   const db = new DatabaseSync(config.dbPath);
-  try { return answerOperationalStatus(db, t); } catch { return null; } finally { db.close(); }
+  try {
+    const r = answerOperationalStatus(db, t);
+    if (!r) console.log(`[status-debug] sem resposta determinística para: ${t}`);
+    return r;
+  } catch (e) {
+    console.log(`[status-debug] erro: ${e instanceof Error ? e.message : e}`);
+    return null;
+  } finally { db.close(); }
 }
 
 /**
@@ -248,7 +255,7 @@ function answerOperationalStatus(db: DatabaseSync, t: string): string | null {
 
   // "Quem está trabalhando?"
   if (/quem\s+(est[áa]\s+)?(trabalhando|ocupado|executando)/i.test(t)) {
-    const rows = db.prepare("SELECT agent_id,title FROM initiative_tasks WHERE status='RUNNING' ORDER BY id").all() as Array<{agent_id:string;title:string}>;
+    const rows = db.prepare("SELECT assigned_agent AS agent_id, title FROM initiative_tasks WHERE status='RUNNING' AND assigned_agent IS NOT NULL ORDER BY id").all() as Array<{agent_id:string;title:string}>;
     return rows.length ? rows.map((r)=>`${r.agent_id} → "${r.title}"`).join(" | ") : "Ninguém executando neste momento.";
   }
 
