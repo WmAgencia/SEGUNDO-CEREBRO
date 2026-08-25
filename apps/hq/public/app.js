@@ -258,10 +258,10 @@ async function checkApprovals(){
 /* ── SSE ── */
 if(window.EventSource){
   const es=new EventSource(`${API}/api/hq/events`);
-  es.onmessage=msg=>{try{const ev=JSON.parse(msg.data);
-    if(ev.type==='AGENT_MOVE'||ev.type==='HANDOFF_CREATED')animateMove(ev.payload||{});
-    if(ev.type==='task_started'){const el=document.getElementById('agent-'+ev.subject);if(el)el.classList.add('working');toast('⚙️ '+String(ev.payload?.title??'tarefa iniciada').slice(0,60))}
-    if(ev.type==='task_finished_ok')toast('✅ '+String(ev.subject??'agente')+' terminou');
+  es.onmessage=msg=>{try{const ev=JSON.parse(msg.data);const t=String(ev.type||'').toUpperCase();
+    if(t==='AGENT_MOVE'||t==='HANDOFF_CREATED')animateMove(ev.payload||{});
+    if(t==='TASK_STARTED'){const el=document.getElementById('agent-'+ev.subject);if(el)el.classList.add('working');toast('⚙️ '+String(ev.payload?.title??'tarefa iniciada').slice(0,60))}
+    if(t==='TASK_FINISHED_OK')toast('✅ '+String(ev.subject??'agente')+' terminou');
   }catch{}refresh();updateBadge();checkApprovals()};
   es.onerror=()=>{$('conn-status').textContent='RECONECTANDO'};
 }
