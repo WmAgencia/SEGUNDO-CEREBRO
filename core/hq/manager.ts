@@ -34,11 +34,12 @@ interface ManagerSession {
   topic: string|null;
   lastBrainResult: string|null;
   lastPlanSummary: string|null;
+  llmProposedPlan: boolean;
 }
 
 const sessions = new Map<string, ManagerSession>();
 function getSession(key: string): ManagerSession {
-  if (!sessions.has(key)) sessions.set(key, { mode:'plane', pending:null, history:[], topic:null, lastBrainResult:null, lastPlanSummary:null });
+  if (!sessions.has(key)) sessions.set(key, { mode:'plane', pending:null, history:[], topic:null, lastBrainResult:null, lastPlanSummary:null, llmProposedPlan:false });
   return sessions.get(key)!;
 }
 
@@ -102,9 +103,19 @@ Sua função:
 - Consultar o contexto fornecido abaixo para dar respostas baseadas em dados REAIS.
 - Quando o usuário pedir informações sobre projetos, tarefas ou agentes, use os dados do contexto.
 - Quando o usuário tiver uma ideia, ajude a estruturá-la.
-- Quando o usuário quiser criar um objetivo, proponha um plano e peça confirmação.
+- Quando o usuário quiser criar um objetivo, propor um plano e peça confirmação.
 - NUNCA invente dados que não estão no contexto.
 - Se o contexto não tiver a informação, diga que não encontrou e ofereça buscar.
+
+IMPORTANTE — AÇÃO OPERACIONAL:
+Quando você propor um plano, objetivo, ou sugerir criar tarefas/goals/initiatives,
+SEMPRE termine sua resposta com o marcador exato [PROPOSTA] na última linha.
+Isso sinaliza ao sistema que você está aguardando confirmação para executar.
+Exemplo:
+"...Posso criar esse objetivo e distribuir as tarefas?
+[PROPOSTA]"
+
+Quando o usuário já confirmou e você está descrevendo o que foi executado, use [EXECUTADO].
 
 Regras:
 - Seja direto e natural, como um gerente de verdade.
@@ -301,19 +312,49 @@ export async function managerChat(config: BrainConfig, text: string, sessionKey 
   const s = getSession(sessionKey);
   s.history.push({ role:'user', text:trimmed });
   if (s.history.length > 100) s.history.shift();
+  const t = trimmed.toLowerCase().replace(/[.!?]+$/,'');
 
-  // Try LLM first (OpenRouter when configured)
+  // ── 1. EXPLICIT COMMANDS (always deterministic, never LLM) ──
+  if (/^(pare tudo|para tudo|kill switch|stop everything)$/i.test(t)) return doStop(config, s);
+  if (/^(continue|retomar|resume)$/i.test(t)) return doResume(config, s);
+  if (/^(plane|brain|build)$/i.test(t)) { s.mode = t as ManagerMode; return resp(s, `Modo ${s.mode} ativo.`); }
+
+  // ── 2. CONFIRMATION — executes REAL actions ──
+  if (/^(pode|pode executar|sim|executa|executar|manda ver|vai|confirmo|go|beleza|ok|okay|faz|faça)\b/i.test(t)) {
+    if (s.pending) return doExecute(config, s);
+    if (s.llmProposedPlan) {
+      s.llmProposedPlan = false;
+      return executeRealPlan(config, s);
+    }
+  }
+
+  // ── 3. REJECTION ──
+  if (/^(não|nao|deixa|depois|cancela|para|espera|volta)\b/i.test(t)) {
+    if (s.pending) { s.pending = null; return resp(s, 'Plano cancelado. Podemos conversar sobre outra coisa.'); }
+    if (s.llmProposedPlan) { s.llmProposedPlan = false; return resp(s, 'Ok, plano descartado. O que você prefere?'); }
+  }
+
+  // ── 4. Call LLM for natural conversation ──
   const llmResponse = await callLLM(config, s, trimmed);
   if (llmResponse && llmResponse.trim()) {
     s.history.push({ role:'manager', text:llmResponse });
-    // Detect mode switch from LLM response
     if (/modo brain/i.test(llmResponse)) s.mode = 'brain';
     if (/modo build/i.test(llmResponse)) s.mode = 'build';
     if (/modo plane/i.test(llmResponse)) s.mode = 'plane';
-    return { type:'conversation', mode:s.mode, message:llmResponse, intent:'CHAT', actions:[], requiresConfirmation:false };
+
+    // Structured plan detection: LLM marks proposals with [PROPOSTA]
+    const isProposal = llmResponse.includes('[PROPOSTA]');
+    const cleanResponse = llmResponse.replace(/\[PROPOSTA\]\s*$/,'').replace(/\[EXECUTADO\]\s*$/,'').trim();
+    s.llmProposedPlan = isProposal;
+
+    if (isProposal && !s.topic) s.topic = extractTopic(trimmed);
+
+    return { type:isProposal ? 'plan' : 'conversation', mode:s.mode, message:cleanResponse, intent:'CHAT',
+      actions:isProposal ? [{type:'create_goal',status:'proposed'}] : [],
+      requiresConfirmation:isProposal };
   }
 
-  // Deterministic fallback (no LLM configured)
+  // ── 5. Deterministic fallback (no LLM configured) ──
   const intent = classifyFallback(trimmed, s);
   switch (intent) {
     case 'STOP': return doStop(config, s);
@@ -323,6 +364,62 @@ export async function managerChat(config: BrainConfig, text: string, sessionKey 
     case 'GOAL_CREATION': return doPropose(trimmed, s);
     default: return fallbackResponse(config, trimmed, s);
   }
+}
+
+function extractTopic(text: string): string {
+  const t = text.toLowerCase();
+  if (/nutriva/i.test(t)) return 'nutriva';
+  if (/vyntra/i.test(t)) return 'vyntra';
+  if (/prospec|lead/i.test(t)) return 'prospecção';
+  if (/venda|faturar|receita/i.test(t)) return 'vendas';
+  if (/marketing|campanha/i.test(t)) return 'marketing';
+  return text.slice(0, 40);
+}
+
+/**
+ * Executes a REAL plan based on the conversation context.
+ * Called when the LLM proposed a plan and the user confirmed.
+ * Creates actual Goal, Initiative and Tasks in the database.
+ */
+function executeRealPlan(config: BrainConfig, s: ManagerSession): ManagerResponse {
+  const db = new DatabaseSync(config.dbPath);
+  try {
+    if (!db.prepare("SELECT id FROM agents WHERE id='manager'").get())
+      db.prepare("INSERT INTO agents (id,name,description,domains,capabilities,permissions,status) VALUES ('manager','Gerente','Orquestrador','[\"management\"]','[\"planejamento\"]','[\"context\"]','AVAILABLE')").run();
+
+    const topic = s.topic ?? 'Novo projeto';
+    const goalName = `Executar: ${topic}`;
+    const goal = createGoal(db, { name:goalName, type:'PROJECT', status:'ACTIVE', ownerAgent:'manager' });
+    persistGoalKnowledge(config, goal);
+    db.prepare("INSERT INTO events (event_type,subject,payload) VALUES ('manager_plan_executed','manager',?)").run(JSON.stringify({goalId:goal.id,topic}));
+
+    // Extract task titles from the LLM conversation
+    const taskTitles = s.history
+      .filter(h => h.role === 'manager' && /\d\.\s|tarefa|implementar|criar|desenvolver/i.test(h.text))
+      .flatMap(h => (h.text.match(/\d\.\s+\*\*([^*]+)\*\*/g) ?? h.text.split('\n').filter(l => /^\d+\./.test(l.trim())))
+        .map(l => l.replace(/^\d+\.\s*\*?\*?/, '').replace(/\*\*/g,'').trim().slice(0, 80)))
+      .filter(t => t.length > 5 && !/confirm|validar com você|registr/i.test(t))
+      .slice(0, 8);
+
+    const finalTasks = taskTitles.length > 0 ? taskTitles : [
+      `Analisar escopo de ${topic}`,
+      `Implementar núcleo de ${topic}`,
+      `Testar e validar ${topic}`,
+      `Documentar e finalizar ${topic}`,
+    ];
+
+    const init = createInitiative(db, { title:`${topic}: plano de execução`, description:'Plano criado via conversa com o Gerente.', goalId:goal.id, project:topic.toLowerCase().includes('nutriva')?'nutriva':undefined, status:'PROPOSED' });
+    planInitiative(db, init.id, finalTasks);
+    const ready = refreshQueue(db, init.id);
+    if (ready[0]!==undefined) assignTask(db, ready[0], { agentId:'engineering-agent', reason:'Manager delegou primeira task do plano conversacional' });
+    persistInitiativeKnowledge(config, goal, init, finalTasks);
+
+    return { type:'execution', mode:s.mode,
+      message:`Plano executado. Criei o objetivo "${goalName}" com ${finalTasks.length} tarefas:\n${finalTasks.map((t,i)=>`${i+1}. ${t}`).join('\n')}\n\nA primeira tarefa foi dispatchada para o Engineering Agent. Acompanhe o progresso no escritório.`,
+      intent:'GOAL_CREATION',
+      actions:[{type:'create_goal',status:'executed',detail:goal.id},{type:'create_initiative',status:'executed',detail:init.id}],
+      requiresConfirmation:false };
+  } finally { db.close(); }
 }
 
 function classifyFallback(text: string, s: ManagerSession): ManagerIntent {
