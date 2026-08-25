@@ -33,7 +33,7 @@ export async function handleNutrivaRequest(req: IncomingMessage, res: ServerResp
   const route = pathname ?? url.pathname;
   const method = req.method ?? "GET";
 
-  if (method === "GET" && route === "/health") {
+  if (method === "GET" && (route === "/health" || route === "/api/health")) {
     json(res, 200, { status: "ok", product: "nutriva", version: "0.2.0", engines: ["plans", "substitutions", "recipes"] });
     return;
   }
