@@ -385,7 +385,10 @@ export async function managerChat(config: BrainConfig, text: string, sessionKey 
   }
 
   // ── 3.5 DESIGN REQUESTS — deterministic planning, never depends on LLM markers ──
-  if (!s.pending && /\b(logo|imagem|banner|arte|ilustra[çc][ãa]o|criativo|thumbnail|capa)\b/i.test(t) && /\b(gere|gerar|crie|criar|faz|fa[çc]a|fazer)\b/i.test(t)) {
+  // Latest intent wins: overwrite any stale pending plan.
+  const wantsImage = /\b(logo|imagem|banner|arte|ilustra[çc][ãa]o|criativo|thumbnail|capa)\b/i.test(t) && /\b(gere|gerar|crie|criar|faz|fa[çc]a|fazer)\b/i.test(t);
+  const pendingIsImage = /^Gerar imagem:/i.test(s.pending?.tasks[0] ?? '');
+  if (wantsImage && !pendingIsImage) {
     return doPropose(trimmed, s);
   }
 
