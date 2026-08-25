@@ -49,7 +49,7 @@ function checkHealth(): Record<string, unknown> {
   try {
     const tables = Number((db.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE type='table'").get() as { n: number }).n);
     const agents = Number((db.prepare("SELECT COUNT(*) AS n FROM agents").get() as { n: number }).n);
-    return { status: "healthy", services: { database: tables > 10, agentRegistry: agents > 0, secondBrain: true, hq: true }, checkedAt: new Date().toISOString() };
+    return { status: "healthy", version: "scale-19", services: { database: tables > 10, agentRegistry: agents > 0, secondBrain: true, hq: true }, checkedAt: new Date().toISOString() };
   } finally { db.close(); }
 }
 
@@ -62,7 +62,29 @@ const server = createServer((req, res) => {
     handleNutrivaRequest(req, res, inner).catch(() => { res.writeHead(500, { "Content-Type": "application/json" }); res.end(JSON.stringify({ error: "nutriva internal error" })); });
     return;
   }
-  if (req.method === "GET" && (url.pathname === "/health" || url.pathname === "/api/hq/health")) { res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify(checkHealth())); return; }
+
+  // Debug endpoint for operational status
+  if (req.method === "GET" && url.pathname === "/api/hq/debug/status") {
+    const t = "quem está trabalhando";
+    const db = new DatabaseSync(config.dbPath);
+    try {
+      const rows = db.prepare("SELECT assigned_agent AS agent_id, title FROM initiative_tasks WHERE status='RUNNING' AND assigned_agent IS NOT NULL ORDER BY id").all() as Array<{agent_id:string;title:string}>;
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ 
+        testRegex: /quem\s+(est[áa]\s+)?(trabalhando|ocupado|executando)/i.test("quem está trabalhando"),
+        isQuestion: /\?|como est|qual|quais|quem|o que|quantos|em que etapa|por que|pr[oó]xim/i.test("quem está trabalhando"),
+        whoMatch: /quem\s+(est[áa]\s+)?(trabalhando|ocupado|executando)/i.test("quem está trabalhando"),
+        runningTasks: (new DatabaseSync(config.dbPath).prepare("SELECT assigned_agent AS agent_id, title FROM initiative_tasks WHERE status='RUNNING' AND assigned_agent IS NOT NULL ORDER BY id").all() as Array<{agent_id:string;title:string}>).length,
+        rows
+      }));
+    } catch (e) {
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: e instanceof Error ? e.message : String(e) }));
+    }
+    return;
+  }
+  
+  if (req.method === "GET" && (url.pathname === "/health" || url.pathname === "/api/hq/health")) {
   if (req.method === "GET" && url.pathname.startsWith("/api/hq/agent/") && url.pathname.endsWith("/logs")) {
     const agentId = decodeURIComponent(url.pathname.split("/")[4] ?? "");
     let db: DatabaseSync | undefined;
