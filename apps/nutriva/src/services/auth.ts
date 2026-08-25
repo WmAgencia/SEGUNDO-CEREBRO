@@ -56,6 +56,11 @@ export function ensureMasterUser(db: DatabaseSync): { email: string; password: s
        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
      );`
   ).run();
+  // Persistent volumes may hold the old table shape — migrate defensively.
+  const cols = db.prepare("PRAGMA table_info(users)").all() as Array<{ name: string }>;
+  if (!cols.some((c) => c.name === "display_name")) {
+    db.prepare("ALTER TABLE users ADD COLUMN display_name TEXT").run();
+  }
   const existing = db.prepare("SELECT id FROM users WHERE email = ?").get(MASTER_EMAIL) as { id: number } | undefined;
   const hash = hashPassword(MASTER_DEFAULT_PASSWORD);
   if (!existing) {
