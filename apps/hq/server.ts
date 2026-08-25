@@ -85,6 +85,8 @@ const server = createServer((req, res) => {
   }
   
   if (req.method === "GET" && (url.pathname === "/health" || url.pathname === "/api/hq/health")) {
+    res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify(checkHealth())); return;
+  }
   if (req.method === "GET" && url.pathname.startsWith("/api/hq/agent/") && url.pathname.endsWith("/logs")) {
     const agentId = decodeURIComponent(url.pathname.split("/")[4] ?? "");
     let db: DatabaseSync | undefined;
