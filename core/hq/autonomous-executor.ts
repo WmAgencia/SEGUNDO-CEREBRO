@@ -38,7 +38,9 @@ async function executeProjectRecordTask(taskTitle: string): Promise<{ status: 'C
 
 async function executeDesignTask(taskTitle: string): Promise<{ status: 'COMPLETED'|'FAILED'; output: string; error?: string }> {
   const isVideo = /^Gerar v[íi]deo:/i.test(taskTitle);
-  const prompt = taskTitle.replace(/^Gerar (imagem|v[íi]deo):\s*/i, '');
+  const rawPrompt = taskTitle.replace(/^Gerar (imagem|v[íi]deo):\s*/i, '');
+  // Task titles can carry huge pasted text — cap the creative prompt.
+  const prompt = rawPrompt.length > 180 ? `${rawPrompt.slice(0, 177)}...` : rawPrompt;
   const r = isVideo ? await generateVideoAndArchive(prompt) : await generateImageAndArchive(prompt);
   if (r.status === 'GENERATED') {
     const fallbackUrl = 'urls' in r && r.urls.length > 0 ? r.urls[0]! : '';

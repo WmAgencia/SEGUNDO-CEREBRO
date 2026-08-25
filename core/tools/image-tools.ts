@@ -10,7 +10,9 @@ export interface ImageGenAndArchiveResult extends ImageGenResult { archived?: im
  * URL: https://image.pollinations.ai/prompt/{encoded_prompt}?width=1024&height=1024&model=flux
  */
 export async function generateImageFree(prompt: string, width = 1024, height = 1024): Promise<ImageGenResult> {
-  const encoded = encodeURIComponent(prompt);
+  // Long prompts blow past URL limits and fail silently — always cap.
+  const capped = prompt.length > 180 ? `${prompt.slice(0, 177)}...` : prompt;
+  const encoded = encodeURIComponent(capped);
   const url = `https://image.pollinations.ai/prompt/${encoded}?width=${width}&height=${height}&model=flux&nologo=true`;
   try {
     const res = await fetch(url, { signal: AbortSignal.timeout(60_000) });
@@ -40,12 +42,9 @@ export async function generateImageOpenRouter(prompt: string, count = 1): Promis
   return { status:'GENERATED', urls, model:'openai/gpt-image-1' };
 }
 
-/** Smart router: tries Pollinations first (free), falls back to OpenRouter. */
+/** Smart router: Pollinations (free). OpenRouter fallback removed — its image endpoint is blocked by data policy and only produced confusing errors. */
 export async function generateImage(prompt: string, count = 1): Promise<ImageGenResult> {
-  const free = await generateImageFree(prompt);
-  if (free.status === 'GENERATED') return free;
-  // Fallback to OpenRouter if Pollinations fails
-  return generateImageOpenRouter(prompt, count);
+  return generateImageFree(prompt);
 }
 
 function imageFileName(prompt: string, ext = 'png'): string {

@@ -18,6 +18,7 @@ import { loadConfig } from "../../core/config/loader.ts";
 import { openDatabase, applySchema } from "../../storage/connection.ts";
 import { getHqSnapshot, executeHqCommand, dispatchInitiative, requestHandoff, agentProfile, progressSummary } from "../../core/hq/hq-api.ts";
 import { recentHqEvents } from "../../core/hq/event-stream.ts";
+import { handleNutrivaRequest } from "../nutriva/src/server.ts";
 import { transcribeAudio } from "../../core/audio/transcription.ts";
 import { executeEngineeringTask } from "../../core/hq/engineering.ts";
 import { listNotifications, unreadCount, markRead, markAllRead, createNotification } from "../../core/hq/notifications.ts";
@@ -56,6 +57,11 @@ const server = createServer((req, res) => {
   cors(req, res);
   if (req.method === "OPTIONS") { res.writeHead(204); res.end(); return; }
   const url = new URL(req.url ?? "/", `http://${host}:${port}`);
+  if (url.pathname === "/nutriva" || url.pathname.startsWith("/nutriva/")) {
+    const inner = url.pathname.replace(/^\/nutriva/, "") || "/";
+    handleNutrivaRequest(req, res, inner).catch(() => { res.writeHead(500, { "Content-Type": "application/json" }); res.end(JSON.stringify({ error: "nutriva internal error" })); });
+    return;
+  }
   if (req.method === "GET" && (url.pathname === "/health" || url.pathname === "/api/hq/health")) { res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify(checkHealth())); return; }
   if (req.method === "GET" && url.pathname === "/api/hq/state") { res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify(getHqSnapshot(config))); return; }
   if (req.method === "GET" && url.pathname === "/api/hq/events") {
