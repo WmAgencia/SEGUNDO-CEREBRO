@@ -114,4 +114,22 @@ describe("Manager Conversacional", () => {
     const r = await managerChat(cfg, "Aprofunde.", session);
     expect(r.message).not.toContain("nenhuma ação");
   });
+
+  it("TEST design: pedido de imagem roteia para o Designer com task unica", async () => {
+    const cfg = config(); const db = openDatabase(cfg.dbPath); applySchema(db); db.close();
+    const session = "test-design-flow";
+    const proposal = await managerChat(cfg, "Designer, gere um logo para a Nutriva", session);
+    expect(proposal.requiresConfirmation).toBe(true);
+    expect(proposal.type).toBe("plan");
+    expect(proposal.message).toMatch(/Gerar imagem/i);
+    const execution = await managerChat(cfg, "Pode", session);
+    expect(execution.type).toBe("execution");
+    expect(execution.message).toContain("Designer Agent");
+    const db2 = openDatabase(cfg.dbPath);
+    const tasks = db2.prepare("SELECT title, assigned_agent FROM initiative_tasks ORDER BY id").all() as Array<{ title: string; assigned_agent: string | null }>;
+    db2.close();
+    expect(tasks.length).toBe(1);
+    expect(tasks[0]!.title).toMatch(/^Gerar imagem:/i);
+    expect(tasks[0]!.assigned_agent).toBe("designer-agent");
+  });
 });

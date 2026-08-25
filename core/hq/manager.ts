@@ -9,6 +9,7 @@ import { persistGoalKnowledge, persistInitiativeKnowledge } from "../obsidian/kn
 import { createNotification } from "./notifications.ts";
 import { completeWithGateway } from "../ai/model-router.ts";
 import { getAllAgentStates } from "./agent-state.ts";
+import { runInitiativeAutonomously } from "./autonomous-executor.ts";
 
 export type ManagerMode = 'plane' | 'brain' | 'build';
 export type ManagerIntent = 'CHAT'|'QUESTION'|'IDEA'|'GOAL_CREATION'|'EXECUTION_CONFIRM'|'STOP'|'RESUME'|'STATUS'|'DIAGNOSIS'|'MODE_SWITCH'|'BRAIN_QUERY'|'IMAGE_REQUEST';
@@ -485,18 +486,40 @@ function executeRealPlan(config: BrainConfig, s: ManagerSession): ManagerRespons
       `Documentar e finalizar ${topic}`,
     ];
 
+    // Design intent: route to Designer agent with a single image task
+    const lastUserMsg = [...s.history].reverse().find(h => h.role === 'user')?.text ?? '';
+    const isImageRequest = /\b(logo|imagem|banner|arte|ilustra[çc][ãa]o|criativo|thumbnail|capa)\b/i.test(lastUserMsg) || /^Gerar imagem:/i.test(finalTasks[0] ?? '');
+    let assignedAgent = 'engineering-agent';
+    if (isImageRequest) {
+      const imagePrompt = lastUserMsg
+        .replace(/^\s*designer\s*,?\s*/i, '')
+        .replace(/^(por\s+favor\s*)?(pode\s+)?(gere|gerar|crie|criar|faz|fa[çc]a|fazer)\s+/i, '')
+        .trim() || topic;
+      finalTasks.length = 0;
+      finalTasks.push(`Gerar imagem: ${imagePrompt}`);
+      assignedAgent = 'designer-agent';
+    }
+    if (assignedAgent === 'designer-agent' && !db.prepare("SELECT id FROM agents WHERE id='designer-agent'").get())
+      db.prepare("INSERT INTO agents (id,name,description,domains,capabilities,permissions,status) VALUES ('designer-agent','Designer','Criativos e imagens','[\"MARKETING\"]','[\"image_generation\"]','[\"context\",\"image_generate\",\"drive_upload\"]','AVAILABLE')").run();
+
     const init = createInitiative(db, { title:`${topic}: plano de execução`, description:'Plano criado via conversa com o Gerente.', goalId:goal.id, project:topic.toLowerCase().includes('nutriva')?'nutriva':undefined, status:'PROPOSED' });
     planInitiative(db, init.id, finalTasks);
     const ready = refreshQueue(db, init.id);
-    if (ready[0]!==undefined) assignTask(db, ready[0], { agentId:'engineering-agent', reason:'Manager delegou primeira task do plano conversacional' });
+    if (ready[0]!==undefined) assignTask(db, ready[0], { agentId:assignedAgent, reason:'Manager delegou primeira task do plano conversacional' });
     persistInitiativeKnowledge(config, goal, init, finalTasks);
 
     // Reset LLM plan state
     s.llmProposedPlan = false;
     s.lastBrainResult = null;
 
+    // Auto-execute the dispatched task (skip under tests)
+    if (!process.env.VITEST && ready[0] !== undefined) {
+      void runInitiativeAutonomously(config, init.id, '').catch(() => {});
+    }
+
+    const agentLabel = assignedAgent === 'designer-agent' ? 'Designer Agent' : 'Engineering Agent';
     return { type:'execution', mode:s.mode,
-      message:`Plano executado. Criei o objetivo "${goalName}" com ${finalTasks.length} tarefas:\n${finalTasks.map((t,i)=>`${i+1}. ${t}`).join('\n')}\n\nA primeira tarefa foi dispatchada para o Engineering Agent. Acompanhe o progresso no escritório.`,
+      message:`Plano executado. Criei o objetivo "${goalName}" com ${finalTasks.length} tarefa(s):\n${finalTasks.map((t,i)=>`${i+1}. ${t}`).join('\n')}\n\nA primeira tarefa foi dispatchada para o ${agentLabel}. Acompanhe o progresso no escritório.`,
       intent:'GOAL_CREATION',
       actions:[{type:'create_goal',status:'executed',detail:goal.id},{type:'create_initiative',status:'executed',detail:init.id}],
       requiresConfirmation:false };
@@ -509,6 +532,7 @@ function classifyFallback(text: string, s: ManagerSession): ManagerIntent {
   if (/^(continue|retomar|resume)$/i.test(t)) return 'RESUME';
   if (/^(plane|brain|build)$/i.test(t)) return 'MODE_SWITCH';
   if (s.pending && /^(pode|executa|sim|vai|manda ver|go)\b/i.test(t)) return 'EXECUTION_CONFIRM';
+  if (/\b(logo|imagem|banner|arte|ilustra[çc][ãa]o|criativo|thumbnail|capa)\b/i.test(t) && /ger|cri|fa[çc]|faz/i.test(t)) return 'GOAL_CREATION';
   if (/(quero|precisamos|preciso)\s+(de\s+)?(faturar|alcançar|vender|criar)\s+/i.test(t) || /r\$\s*[\d.,]+/i.test(t)) return 'GOAL_CREATION';
   return 'CHAT';
 }
@@ -519,7 +543,12 @@ function extractPlan(text: string): PendingPlan {
   const target = tm?.[1] ? Number(tm[1].replace(/\./g,'').replace(',','.')) : undefined;
   const isCommercial = /r\$|venda|vendas|faturar|receita|lead|prospec/i.test(t);
   const isNutriva = /nutriva/i.test(t);
+  const isImage = /\b(logo|imagem|banner|arte|ilustra[çc][ãa]o|criativo|thumbnail|capa)\b/i.test(t);
   let name = t.replace(/^(quero|precisamos|preciso|vamos)\s+(de\s+|a\s+)?/i,'').replace(/^(faturar|alcançar|atingir|criar)\s+/i,'').replace(/\s+até\s+.*$/i,'').replace(/\s+este\s+mês.*$/i,'').trim();
+  if (isImage) {
+    const prompt = name.replace(/^\s*designer\s*,?\s*/i,'').replace(/^(por\s+favor\s*)?(pode\s+)?(gere|gerar|crie|criar|faz|fa[çc]a|fazer)\s+/i,'').trim() || 'criativo solicitado';
+    return { goalName:`Imagem: ${prompt}`, goalType:'PROJECT', target, tasks:[`Gerar imagem: ${prompt}`], project:isNutriva?'nutriva':undefined };
+  }
   if (!name) name = isCommercial ? 'Meta comercial' : 'Novo objetivo';
   const tasks = isCommercial
     ? ['Definir segmentos prioritários','Prospecção de leads qualificados','Preparar abordagem e proposta','Executar outreach comercial','Follow-up e qualificação','Consolidar resultados']
@@ -550,10 +579,17 @@ function doExecute(config: BrainConfig, s: ManagerSession): ManagerResponse {
     const init = createInitiative(db, { title:plan.goalName, description:'Plano via Command Center.', goalId:goal.id, project:plan.project??undefined, status:'PROPOSED' });
     planInitiative(db, init.id, plan.tasks);
     const ready = refreshQueue(db, init.id);
-    if (ready[0]!==undefined) assignTask(db, ready[0], { agentId:'manager', reason:'Manager delegou primeira task' });
+    const isDesignPlan = /^Gerar imagem:/i.test(plan.tasks[0] ?? '');
+    if (isDesignPlan && !db.prepare("SELECT id FROM agents WHERE id='designer-agent'").get())
+      db.prepare("INSERT INTO agents (id,name,description,domains,capabilities,permissions,status) VALUES ('designer-agent','Designer','Criativos e imagens','[\"MARKETING\"]','[\"image_generation\"]','[\"context\",\"image_generate\",\"drive_upload\"]','AVAILABLE')").run();
+    if (ready[0]!==undefined) assignTask(db, ready[0], { agentId:isDesignPlan?'designer-agent':'manager', reason:'Manager delegou primeira task' });
     persistInitiativeKnowledge(config, goal, init, plan.tasks);
+    if (!process.env.VITEST && ready[0] !== undefined) {
+      void runInitiativeAutonomously(config, init.id, '').catch(() => {});
+    }
     s.pending = null; s.lastPlanSummary = plan.goalName;
-    return { type:'execution', mode:s.mode, message:`Objetivo "${plan.goalName}" criado com ${plan.tasks.length} tarefas. Primeira task dispatchada. Tudo registrado no Obsidian.`, intent:'GOAL_CREATION', actions:[{type:'create_goal',status:'executed',detail:goal.id},{type:'create_initiative',status:'executed',detail:init.id}], requiresConfirmation:false };
+    const agentLabel = isDesignPlan ? 'Designer Agent' : 'agente responsável';
+    return { type:'execution', mode:s.mode, message:`Objetivo "${plan.goalName}" criado com ${plan.tasks.length} tarefa(s). Primeira task dispatchada para o ${agentLabel}. Tudo registrado no Obsidian.`, intent:'GOAL_CREATION', actions:[{type:'create_goal',status:'executed',detail:goal.id},{type:'create_initiative',status:'executed',detail:init.id}], requiresConfirmation:false };
   } finally { db.close(); }
 }
 
