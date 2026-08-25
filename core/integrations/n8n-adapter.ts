@@ -64,7 +64,7 @@ export async function triggerWorkflow(
     }
     let parsed: Record<string, unknown> = {};
     try { parsed = JSON.parse(text) as Record<string, unknown>; } catch { /* webhook pode responder texto */ }
-    const executionId = (parsed.executionId ?? parsed.execution?.id ?? parsed.id) as string | number | undefined;
+    const executionId = (parsed.executionId ?? (parsed.execution as Record<string, unknown> | undefined)?.id ?? parsed.id) as string | number | undefined;
     emitBus(db, "n8n.triggered", { subject: workflowPath, data: { executionId } });
     return { status: "TRIGGERED", executionId, evidence: { url, sentAt: new Date().toISOString(), payloadBytes: Buffer.byteLength(body) } };
   } catch (err) {

@@ -126,12 +126,12 @@ describe("n8n adapter — BLOCKED quando não configurado; real contra servidor 
   });
 
   it("workflow configurado dispara POST real e registra evidência + evento", async () => {
-    let received: { path: string; body: Record<string, unknown> } | null = null;
+    const received: { v: { path: string; body: Record<string, unknown> } | null } = { v: null };
     const server = http.createServer((req, res) => {
       let raw = "";
       req.on("data", (c) => (raw += c));
       req.on("end", () => {
-        received = { path: req.url ?? "", body: JSON.parse(raw || "{}") };
+        received.v = { path: req.url ?? "", body: JSON.parse(raw || "{}") };
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ executionId: 4242 }));
       });
@@ -144,10 +144,10 @@ describe("n8n adapter — BLOCKED quando não configurado; real contra servidor 
     expect(r.status).toBe("TRIGGERED");
     expect(r.executionId).toBe(4242);
     expect(r.evidence.payloadBytes).toBeGreaterThan(10);
-    expect(received).not.toBeNull();
-    if (received) {
-      expect(received.path).toBe("/prospeccao-ciclo");
-      expect((received.body as { source: string }).source).toBe("second-brain-hq");
+    expect(received.v).not.toBeNull();
+    if (received.v) {
+      expect(received.v.path).toBe("/prospeccao-ciclo");
+      expect((received.v.body as { source: string }).source).toBe("second-brain-hq");
     }
     const evt = recentBusEvents(db, { types: ["n8n.triggered"], limit: 1 })[0];
     expect(evt).toBeTruthy();
