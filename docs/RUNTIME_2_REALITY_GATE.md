@@ -17,19 +17,20 @@
 | COST_BUDGET_REAL | **PASS REAL** | Soma diária de model_generations.testada com custos reais e dia anterior excluído |
 | EVIDENCE_GATE | **PASS REAL** (wrapper) | `requireEvidence` recusa output<40 chars sem artifact/source. submitResult legado intacto (documentado) — integração nos workers novos |
 | TASK_LIFECYCLE_VALIDATED | PASS (pré-existente) | harness 15 estados c/ transições; MAX_RETRIES→approval humano |
-| EVALUATOR_INDEPENDENT | PARTIAL | requestReview/resolveReview existe; uso ainda opcional por task |
-| KILL_SWITCH_PERSISTENCE | **NOT VALIDATED** → fragilidade F1 documentada (isKillSwitchActive ignora DB) |
+| EVALUATOR_INDEPENDENT | **PASS REAL** | Iniciativas `kind=dev` → `required_review=1` força revisão: task WAITING, agent_results PENDING, approval CONTENT criado; fluxo legado intacto. Testes runtime2b |
+| KILL_SWITCH_PERSISTENCE | **PASS REAL** | F1 corrigido: `setKillSwitch(active, db)` grava `index_metadata`; ciclo novo lê do DB e respeita após "restart" simulado; Gerente e webhook persistem |
+| PARALLEL_RUNS_HEARTBEAT | **PASS REAL** | Cada task executada pelo orquestrador cria run REAL em agent_runs (RUNNING→COMPLETED/FAILED), heartbeat a cada 30s + no finish, eventos task.started/completed/failed no bus |
 
 ## COMMITS DESTA FASE
 - `07a8a69` + `8d51554` — runtime-ops, event-bus, n8n-adapter, cost-control, schema v21
+- `d4137c1` — kill switch persistido, runs+heartbeat no orquestrador, QA obrigatório dev (schema v22)
 - Auditoria: `docs/RUNTIME_2_AUDIT.md`
 
 ## NÚMEROS FINAIS
-- Testes: **328/328** (41 arquivos) — zero regressões
-- Typecheck: limpo · Schema: **v21**
+- Testes: **335/335** (42 arquivos) — zero regressões
+- Typecheck: limpo · Schema: **v22**
 
-## PRÓXIMOS (ordem sugerida)
-1. Wire `touchHeartbeat` dentro de runInitiativeParallel (loop de tasks)
-2. Persistir kill switch em DB (F1)
-3. Prospector ciclos → triggerWorkflow n8n quando configurado
-4. Evaluator obrigatório p/ tasks kind=dev (reviewer=qa-agent)
+## PRÓXIMOS
+1. Prospector ciclos → triggerWorkflow n8n quando configurado (**N8N pendente**)
+2. Wire evidence gate nos workers OpenCode (artifacts = arquivos modificados/diff)
+3. Scheduler recorrente por agente (cron-like) usando event-bus
