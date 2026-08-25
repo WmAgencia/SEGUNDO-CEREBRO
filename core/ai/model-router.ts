@@ -50,9 +50,38 @@ export class OpenRouterProvider implements LLMProvider {
   }
 }
 
+/** Groq (OpenAI-compatible, ultra-fast). Usado automaticamente quando GROQ_API_KEY existe. */
+export class GroqProvider implements LLMProvider {
+  readonly name = "groq";
+  readonly model: string;
+  private readonly apiKey: string;
+  private readonly baseUrl = "https://api.groq.com/openai/v1";
+  constructor(options: { apiKey?: string; model?: string } = {}) {
+    this.model = options.model ?? process.env.SECOND_BRAIN_GROQ_MODEL ?? "openai/gpt-oss-120b";
+    this.apiKey = options.apiKey ?? process.env.GROQ_API_KEY ?? "";
+  }
+  async isAvailable(): Promise<boolean> { return Boolean(this.apiKey); }
+  async complete(request: CompletionRequest): Promise<CompletionResult> {
+    if (!this.apiKey) throw new Error("GROQ_API_KEY not configured");
+    const response = await fetch(`${this.baseUrl}/chat/completions`, { method: "POST", headers: { Authorization: `Bearer ${this.apiKey}`, "Content-Type": "application/json" }, body: JSON.stringify({ model: this.model, messages: request.messages, max_tokens: request.maxTokens ?? 512, temperature: request.temperature ?? 0.2, response_format: request.jsonMode ? { type: "json_object" } : undefined }), signal: AbortSignal.timeout(60_000) });
+    const data = await response.json() as OpenRouterResponse & { error?: { message?: string } };
+    if (!response.ok) throw new Error(`groq HTTP ${response.status}: ${JSON.stringify(data.error ?? data).slice(0, 300)}`);
+    return { content: data.choices?.[0]?.message?.content ?? "", model: data.model ?? this.model, tokensPrompt: data.usage?.prompt_tokens, tokensCompletion: data.usage?.completion_tokens };
+  }
+}
+
+/** Cadeia de providers padrão: Groq (se configurado) → OpenRouter. Nunca esconde erro do provider. */
+export function defaultProviderChain(route = selectModel({})): LLMProvider[] {
+  const chain: LLMProvider[] = [];
+  if (process.env.GROQ_API_KEY) chain.push(new GroqProvider());
+  if (process.env.OPENROUTER_API_KEY) chain.push(new OpenRouterProvider(route));
+  if (chain.length === 0) chain.push(new OpenRouterProvider(route));
+  return chain;
+}
+
 export interface GatewayResult extends CompletionResult { provider: string; latencyMs: number; totalTokens?: number; cost?: number; fallbackFrom?: string; }
 export async function completeWithGateway(db: DatabaseSync | null, request: CompletionRequest, selection: ModelSelection = {}, providers?: LLMProvider[]): Promise<GatewayResult> {
-  const route = selectModel(selection); const available = providers ?? [new OpenRouterProvider(route)]; const started = Date.now(); let lastError: unknown;
+  const route = selectModel(selection); const available = providers ?? defaultProviderChain(route); const started = Date.now(); let lastError: unknown;
   for (let i = 0; i < available.length; i++) {
     const provider = available[i]!;
     try { const result = await provider.complete(request); const latencyMs = Date.now() - started; if (db) db.prepare("INSERT INTO model_generations (provider,model,status,prompt_tokens,completion_tokens,total_tokens,latency_ms,fallback_from,error) VALUES (?,?,?,?,?,?,?,?,?)").run(provider.name, result.model, "COMPLETED", result.tokensPrompt ?? null, result.tokensCompletion ?? null, (result.tokensPrompt ?? 0) + (result.tokensCompletion ?? 0), latencyMs, i ? route.model : null, null); return { ...result, provider: provider.name, latencyMs, totalTokens: (result.tokensPrompt ?? 0) + (result.tokensCompletion ?? 0), fallbackFrom: i ? route.model : undefined }; } catch (error) { lastError = error; }

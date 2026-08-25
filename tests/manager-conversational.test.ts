@@ -1,10 +1,25 @@
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { openDatabase, applySchema } from "../storage/connection.ts";
 import { managerChat } from "../core/hq/manager.ts";
 import type { BrainConfig } from "../core/config/loader.ts";
+
+// Estes testes validam o caminho DETERMINÍSTICO do Gerente. Chaves de LLM no
+// ambiente fariam o Gerente responder via Groq/OpenRouter (não determinístico).
+let savedEnv: Record<string, string | undefined> = {};
+beforeAll(() => {
+  for (const k of ["OPENROUTER_API_KEY", "GROQ_API_KEY"]) {
+    savedEnv[k] = process.env[k];
+    delete process.env[k];
+  }
+});
+afterAll(() => {
+  for (const k of Object.keys(savedEnv)) {
+    if (savedEnv[k]) process.env[k] = savedEnv[k];
+  }
+});
 
 let directory = "";
 afterEach(() => { if (directory) rmSync(directory, { recursive: true, force: true }); directory = ""; });
@@ -156,22 +171,25 @@ describe("Manager Conversacional", () => {
     expect(tasks[0]!.assigned_agent).toBe("designer-agent");
   });
 
-  it("TEST projeto dev: cria task de registro no Drive", async () => {
+  it("TEST projeto dev: cria plano de build com deploy Vercel", async () => {
     const cfg = config(); const db = openDatabase(cfg.dbPath); applySchema(db); db.close();
     const session = "test-dev-flow";
     const proposal = await managerChat(cfg, "Quero iniciar um projeto de site para a Nutriva", session);
     expect(proposal.requiresConfirmation).toBe(true);
     expect(proposal.type).toBe("plan");
-    expect(proposal.message).toMatch(/Registrar projeto no Drive/i);
+    expect(proposal.message).toMatch(/Criar reposit[óo]rio GitHub/i);
+    expect(proposal.message).toMatch(/Vercel/i);
     const execution = await managerChat(cfg, "Pode", session);
     expect(execution.type).toBe("execution");
     expect(execution.message).toContain("Engineering Agent");
     const db2 = openDatabase(cfg.dbPath);
     const tasks = db2.prepare("SELECT title, assigned_agent FROM initiative_tasks ORDER BY id").all() as Array<{ title: string; assigned_agent: string | null }>;
     db2.close();
-    expect(tasks.length).toBe(1);
-    expect(tasks[0]!.title).toMatch(/^Registrar projeto no Drive:\s*site/i);
+    expect(tasks.length).toBeGreaterThan(1);
+    expect(tasks[0]!.title).toMatch(/^Criar reposit[óo]rio GitHub/i);
     expect(tasks[0]!.assigned_agent).toBe("engineering-agent");
+    // Última task do plano dev é sempre o deploy na Vercel
+    expect(tasks[tasks.length - 1]!.title).toMatch(/deploy na Vercel/i);
   });
 
   it("TEST contexto: goal concluida e iniciativa NUNCA somem do radar do gerente", async () => {

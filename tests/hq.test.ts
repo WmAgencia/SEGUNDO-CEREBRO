@@ -1,10 +1,21 @@
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, afterAll, describe, expect, it } from "vitest";
 import { openDatabase, applySchema } from "../storage/connection.ts";
 import { executeHqCommand, getHqSnapshot } from "../core/hq/hq-api.ts";
 import type { BrainConfig } from "../core/config/loader.ts";
+
+let savedEnv: Record<string, string | undefined> = {};
+beforeAll(() => {
+  for (const k of ["OPENROUTER_API_KEY", "GROQ_API_KEY"]) {
+    savedEnv[k] = process.env[k];
+    delete process.env[k];
+  }
+});
+afterAll(() => {
+  for (const k of Object.keys(savedEnv)) if (savedEnv[k]) process.env[k] = savedEnv[k];
+});
 
 let directory = "";
 afterEach(() => { if (directory) rmSync(directory, { recursive: true, force: true }); directory = ""; });

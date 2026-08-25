@@ -28,6 +28,34 @@ export interface ManagerResponse {
 interface PendingPlan {
   goalName: string; goalType: 'FINANCIAL'|'PROJECT';
   target?: number; tasks: string[]; project?: string;
+  kind: 'dev'|'image'|'video'|'commercial'|'generic';
+}
+
+/* ── INTENÇÃO DOMINANTE ──
+ * Briefings longos de projeto frequentemente MENCIONAM "imagem", "banner",
+ * "criativo" em passagens irrelevantes. A intenção real vem dos substantivos
+ * de ENTREGA (site, sistema, app) + verbos de construção. Imagem/vídeo só
+ * vencem em comandos CURTOS e explícitos ("gere um logo para X").
+ */
+export function classifyCreativeIntent(text: string): 'dev'|'image'|'video'|'none' {
+  const t = text.toLowerCase();
+  const short = text.trim().length <= 180;
+
+  // Correção explícita do usuário SEMPRE vence ("não é a imagem, preciso que code o site").
+  const explicitCorrection = /\b(n[ãa]o\s+(é|e)\s+(a?\s*)?(imagem|logo|v[íi]deo)|preciso que code|quero que code|code o site|codar|codifique|desenvolv[ae] o site|monte o site|programar? o site)\b/i.test(t);
+  const devDeliverable = /\b(site|sites|sistema|sistemas|aplicativo|app|plataforma|dashboard|landing\s?page|webapp|e-?commerce|loja\s+virtual|c[óo]digo|front-?end|repo(sit[óo]rio)?|github)\b/i.test(t);
+  if (explicitCorrection && devDeliverable) return 'dev';
+
+  const buildVerb = /\b(criar?|crie|cria[çc][ãa]o|desenvolver|desenvolve|programar?|construir|montar|codificar|implementar|iniciar|inicia|come[çc]ar|fazer|faz|fa[çc]a)\b/i.test(t);
+  if (devDeliverable && buildVerb) return 'dev';
+
+  const wantsVideo = /\b(v[íi]deo|videos|anima[çc][ãa]o)\b/i.test(t);
+  const imageNoun = /\b(logo|logotipo|imagem|banner|arte|ilustra[çc][ãa]o|criativo|thumbnail|capa)\b/i.test(t);
+  const explicitImageCmd = short && imageNoun && /\b(gere|gerar|crie|criar|faz|fa[çc]a|fazer|desenhe)\b/i.test(t)
+    && !/\bsite\b|\bsistema\b|\bapp\b|\bc[óo]digo\b/.test(t);
+  if (explicitImageCmd) return 'image';
+  if (wantsVideo && short && !devDeliverable) return 'video';
+  return 'none';
 }
 
 interface ManagerSession {
@@ -75,6 +103,7 @@ function getSession(key: string, config?: BrainConfig): ManagerSession {
             goalType: pending.goal_type as 'FINANCIAL'|'PROJECT',
             target: pending.target ?? undefined,
             tasks: pending.tasks || [],
+            kind: 'generic',
           };
         }
       } finally { db.close(); }
@@ -552,18 +581,18 @@ export async function managerChat(config: BrainConfig, text: string, sessionKey 
     }
   }
 
-  // ── 3. REJECTION ──
+  // ── 3. REJECTION (ou CORREÇÃO com nova instrução) ──
   if (/^(não|nao|deixa|depois|cancela|para|espera|volta)\b/i.test(t)) {
+    // "Não é X, preciso que Y" = correção com intenção NOVA → sobrescreve plano.
+    if (classifyCreativeIntent(trimmed) !== 'none') return doPropose(trimmed, s);
     if (s.pending) { s.pending = null; return resp(s, 'Plano cancelado. Podemos conversar sobre outra coisa.'); }
     if (s.llmProposedPlan) { s.llmProposedPlan = false; return resp(s, 'Ok, plano descartado. O que você prefere?'); }
   }
 
   // ── 3.5 CREATIVE/PROJECT REQUESTS ──
   // Latest intent wins: overwrite any stale pending plan.
-  const wantsVideo = /\b(v[íi]deo|videos|anima[çc][ãa]o|anime)\b/i.test(t) || /\b(gerar?|crie|criar?)\s+(um\s+)?v[íi]deo\b/i.test(t);
-  const wantsImage = !wantsVideo && /\b(logo|imagem|banner|arte|ilustra[çc][ãa]o|criativo|thumbnail|capa)\b/i.test(t) && /\b(gere|gerar|crie|criar|faz|fa[çc]a|fazer)\b/i.test(t);
-  const wantsDev = !wantsVideo && !wantsImage && /\b(site|sites|sistema|sistemas|aplicativo|app|plataforma|dashboard|landing\s?page|webapp|e-?commerce|projeto)\b/i.test(t) && /\b(criar?|crie|desenvolver|desenvolve|fazer|faz|iniciar|inicia|construir|montar|come[çc]ar)\b/i.test(t);
-  if ((wantsImage || wantsVideo || wantsDev) && !/^Gerar (imagem|v[íi]deo):|^Registrar projeto no Drive:/i.test(s.pending?.tasks[0] ?? '')) {
+  const creative = classifyCreativeIntent(trimmed);
+  if (creative !== 'none' && !/^Gerar (imagem|v[íi]deo):|^Registrar projeto no Drive:/i.test(s.pending?.tasks[0] ?? '')) {
     return doPropose(trimmed, s);
   }
 
@@ -687,16 +716,16 @@ function executeRealPlan(config: BrainConfig, s: ManagerSession): ManagerRespons
       `Documentar e finalizar ${topic}`,
     ];
 
-    // Design intent: route to Designer agent with a single creative task
-    const userMsgs = s.history.filter(h => h.role === 'user');
-    const videoMsg = [...userMsgs].reverse().find(h => /\b(v[íi]deo|videos|anima[çc][ãa]o)\b/i.test(h.text));
-    const imageMsg = !videoMsg && [...userMsgs].reverse().find(h => /\b(logo|imagem|banner|arte|ilustra[çc][ãa]o|criativo|thumbnail|capa)\b/i.test(h.text));
-    const creativeMsg = videoMsg ?? imageMsg;
-    const isImageRequest = Boolean(creativeMsg) || /^Gerar (imagem|v[íi]deo):/i.test(finalTasks[0] ?? '');
+    // Design intent: SOMENTE comandos curtos e explícitos de imagem/vídeo vão
+    // para o Designer. Briefings longos de site/sistema são DEV mesmo citando
+    // "imagem" em passagens do texto.
+    const lastUserMsg = [...s.history].reverse().find(h => h.role === 'user')?.text ?? '';
+    const creativeKind = classifyCreativeIntent(lastUserMsg);
+    const isImageRequest = creativeKind === 'image' || creativeKind === 'video';
     let assignedAgent = 'engineering-agent';
-    if (isImageRequest && creativeMsg) {
-      const wantsVideo = Boolean(videoMsg);
-      const imagePrompt = creativeMsg.text
+    if (isImageRequest) {
+      const wantsVideo = creativeKind === 'video';
+      const imagePrompt = lastUserMsg
         .replace(/^\s*designer\s*,?\s*/i, '')
         .replace(/^(por\s+favor\s*)?(pode\s+)?(gere|gerar|crie|criar|faz|fa[çc]a|fazer)\s+(um\s+|uma\s+)?/i, '')
         .trim() || topic;
@@ -750,22 +779,32 @@ function extractPlan(text: string): PendingPlan {
   const target = tm?.[1] ? Number(tm[1].replace(/\./g,'').replace(',','.')) : undefined;
   const isCommercial = /r\$|venda|vendas|faturar|receita|lead|prospec/i.test(t);
   const isNutriva = /nutriva/i.test(t);
-  const wantsVideo = /\b(v[íi]deo|videos|anima[çc][ãa]o)\b/i.test(t);
-  const isImage = !wantsVideo && /\b(logo|imagem|banner|arte|ilustra[çc][ãa]o|criativo|thumbnail|capa)\b/i.test(t);
-  const wantsDev = !wantsVideo && !isImage && /\b(site|sites|sistema|sistemas|aplicativo|aplicativo|app|plataforma|dashboard|landing\s?page|webapp|e-?commerce|projeto)\b/i.test(t) && /\b(criar?|crie|desenvolver|desenvolve|fazer|faz|iniciar|inicia|construir|montar|começar|comeca)\b/i.test(t);
+  const creative = classifyCreativeIntent(t);
+
   let name = t.replace(/^(quero|precisamos|preciso|vamos)\s+(de\s+|a\s+)?/i,'').replace(/^(faturar|alcançar|atingir|criar)\s+/i,'').replace(/\s+até\s+.*$/i,'').replace(/\s+este\s+mês.*$/i,'').trim();
-  if (wantsDev) {
+  if (creative === 'dev') {
     const projectName = name
       .replace(/^(por\s+favor\s*)?(pode\s+)?/i,'')
       .replace(/^(criar|crie|desenvolver|desenvolve|fazer|faz|iniciar|inicia|construir|montar|come[çc]ar)\s+(um|uma|o|a|novo|nova)?\s*/i,'')
       .replace(/^(projeto|projetos)\s+(de\s+)?/i,'')
-      .trim() || 'Novo projeto';
-    return { goalName:`Projeto: ${projectName}`, goalType:'PROJECT', target, tasks:[`Registrar projeto no Drive: ${projectName}`], project:isNutriva?'nutriva':undefined };
+      .split(/[.\n#]/)[0]!.trim().slice(0, 60) || 'Novo projeto';
+    return {
+      goalName:`Projeto: ${projectName}`, goalType:'PROJECT', target, kind:'dev',
+      project:isNutriva?'nutriva':undefined,
+      tasks:[
+        `Criar repositório GitHub e estrutura base do projeto ${projectName}`,
+        `Implementar estrutura HTML semântica + SEO/Open Graph`,
+        `Implementar design system (paleta, tipografia, componentes)`,
+        `Implementar seções de conteúdo conforme briefing`,
+        `Responsividade mobile-first + animações e microinterações`,
+        `Revisão QA e deploy na Vercel para atualizar o front-end`,
+      ],
+    };
   }
-  if (wantsVideo || isImage) {
-    const prefix = wantsVideo ? 'Gerar vídeo' : 'Gerar imagem';
+  if (creative === 'video' || creative === 'image') {
+    const prefix = creative === 'video' ? 'Gerar vídeo' : 'Gerar imagem';
     const prompt = name.replace(/^\s*designer\s*,?\s*/i,'').replace(/^(por\s+favor\s*)?(pode\s+)?(gere|gerar|crie|criar|faz|fa[çc]a|fazer)\s+(um\s+|uma\s+)?(logo\s+|imagem\s+|v[íi]deo\s+|anima[çc][ãa]o\s+)?/i,'').trim() || 'criativo solicitado';
-    return { goalName:`${wantsVideo?'Vídeo':'Imagem'}: ${prompt}`, goalType:'PROJECT', target, tasks:[`${prefix}: ${prompt}`], project:isNutriva?'nutriva':undefined };
+    return { goalName:`${creative === 'video'?'Vídeo':'Imagem'}: ${prompt}`, goalType:'PROJECT', target, kind:creative, tasks:[`${prefix}: ${prompt}`], project:isNutriva?'nutriva':undefined };
   }
   if (!name) name = isCommercial ? 'Meta comercial' : 'Novo objetivo';
   const tasks = isCommercial
@@ -773,7 +812,7 @@ function extractPlan(text: string): PendingPlan {
     : isNutriva
       ? ['Auditar estado atual do Nutriva','Implementar próxima melhoria','Executar testes e avaliação']
       : ['Analisar contexto','Definir abordagem','Executar','Avaliar'];
-  return { goalName:name, goalType:isCommercial?'FINANCIAL':'PROJECT', target, tasks, project:isNutriva?'nutriva':isCommercial?'consecom':undefined };
+  return { goalName:name, goalType:isCommercial?'FINANCIAL':'PROJECT', target, kind:isCommercial?'commercial':'generic', tasks, project:isNutriva?'nutriva':isCommercial?'consecom':undefined };
 }
 
 function doPropose(text: string, s: ManagerSession): ManagerResponse {
@@ -797,20 +836,23 @@ function doExecute(config: BrainConfig, s: ManagerSession): ManagerResponse {
     const init = createInitiative(db, { title:plan.goalName, description:'Plano via Command Center.', goalId:goal.id, project:plan.project??undefined, status:'PROPOSED' });
     planInitiative(db, init.id, plan.tasks);
     const ready = refreshQueue(db, init.id);
-    const isDesignPlan = /^Gerar (imagem|v[íi]deo):/i.test(plan.tasks[0] ?? '');
-    const isProjectRecord = /^Registrar projeto no Drive:/i.test(plan.tasks[0] ?? '');
-    if (isDesignPlan && !db.prepare("SELECT id FROM agents WHERE id='designer-agent'").get())
+    const targetAgent = plan.kind === 'dev' ? 'engineering-agent'
+      : plan.kind === 'image' || plan.kind === 'video' ? 'designer-agent'
+      : plan.kind === 'commercial' ? 'prospector-agent' : 'engineering-agent';
+    if ((plan.kind === 'image' || plan.kind === 'video') && !db.prepare("SELECT id FROM agents WHERE id='designer-agent'").get())
       db.prepare("INSERT INTO agents (id,name,description,domains,capabilities,permissions,status) VALUES ('designer-agent','Designer','Criativos e imagens','[\"MARKETING\"]','[\"image_generation\"]','[\"context\",\"image_generate\",\"drive_upload\"]','AVAILABLE')").run();
-    if (isProjectRecord && !db.prepare("SELECT id FROM agents WHERE id='engineering-agent'").get())
+    if (!db.prepare("SELECT id FROM agents WHERE id='engineering-agent'").get())
       db.prepare("INSERT INTO agents (id,name,description,domains,capabilities,permissions,status) VALUES ('engineering-agent','Engenharia','Projetos e sistemas','[\"DESENVOLVIMENTO\"]','[\"execute\"]','[\"context\",\"execute\",\"drive_upload\"]','AVAILABLE')").run();
-    if (ready[0]!==undefined) assignTask(db, ready[0], { agentId:isDesignPlan?'designer-agent':isProjectRecord?'engineering-agent':'manager', reason:'Manager delegou primeira task' });
+    if (plan.kind === 'commercial' && !db.prepare("SELECT id FROM agents WHERE id='prospector-agent'").get())
+      db.prepare("INSERT INTO agents (id,name,description,domains,capabilities,permissions,status) VALUES ('prospector-agent','Prospector','Prospecção e pesquisa de leads','[\"PROSPECÇÃO\"]','[\"web_search\"]','[\"context\",\"web_search\"]','AVAILABLE')").run();
+    if (ready[0]!==undefined) assignTask(db, ready[0], { agentId:targetAgent, reason:`Manager delegou primeira task (kind=${plan.kind})` });
     persistInitiativeKnowledge(config, goal, init, plan.tasks);
     if (!process.env.VITEST && ready[0] !== undefined) {
       void runInitiativeParallel(config, init.id).catch(() => {});
     }
     s.pending = null; s.lastPlanSummary = plan.goalName;
-    const agentLabel = isDesignPlan ? 'Designer Agent' : isProjectRecord ? 'Engineering Agent' : 'agente responsável';
-    return { type:'execution', mode:s.mode, message:`Objetivo "${plan.goalName}" criado com ${plan.tasks.length} tarefa(s). Primeira task dispatchada para o ${agentLabel}. Tudo registrado no Obsidian.`, intent:'GOAL_CREATION', actions:[{type:'create_goal',status:'executed',detail:goal.id},{type:'create_initiative',status:'executed',detail:init.id}], requiresConfirmation:false };
+    const agentLabel = plan.kind === 'dev' ? 'Engineering Agent' : (plan.kind === 'image' || plan.kind === 'video') ? 'Designer Agent' : plan.kind === 'commercial' ? 'Prospector Agent' : 'agente responsável';
+    return { type:'execution', mode:s.mode, message:`Objetivo "${plan.goalName}" criado com ${plan.tasks.length} tarefa(s). Primeira task dispatchada para o ${agentLabel}. Deploy final na Vercel incluído no plano. Tudo registrado no Obsidian.`, intent:'GOAL_CREATION', actions:[{type:'create_goal',status:'executed',detail:goal.id},{type:'create_initiative',status:'executed',detail:init.id}], requiresConfirmation:false };
   } finally { db.close(); }
 }
 
