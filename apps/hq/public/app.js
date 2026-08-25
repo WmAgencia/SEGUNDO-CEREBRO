@@ -56,7 +56,8 @@ function renderFloor(data){
     const color=COLORS[id]||'#999',hair=HAIR[id]||color;
     const opState=ag.operationalState||ag.status;
     const cls=stCls(opState);
-    h+=`<div class="agent ${cls}" id="agent-${esc(id)}" style="left:${pos.x}px;top:${pos.y-50}px" data-agent="${esc(id)}" title="${esc(ag.name)} — ${esc(stPt(opState))}${ag.operationalReason?' ('+esc(ag.operationalReason)+')':''}"><span class="nametag">${esc(ag.name)}</span><div class="hair" style="background:${hair}"></div><div class="head"></div><div class="body" style="background:${color}"></div><div class="sdot"></div></div>`;
+    const working=opState==='WORKING';
+    h+=`<div class="agent ${cls}" id="agent-${esc(id)}" style="left:${pos.x}px;top:${pos.y-50}px" data-agent="${esc(id)}" title="${esc(ag.name)} — ${esc(stPt(opState))}${ag.operationalReason?' ('+esc(ag.operationalReason)+')':''}">${working&&ag.currentTask?`<div class="bubble">⌨️ ${esc(String(ag.currentTask).slice(0,44))}</div>`:''}<span class="nametag">${esc(ag.name)}</span><div class="hair" style="background:${hair}"></div><div class="head"></div><div class="body" style="background:${color}"></div><div class="sdot"></div></div>`;
   }
   f.innerHTML=h;
   // Owner character in meeting room
@@ -257,7 +258,11 @@ async function checkApprovals(){
 /* ── SSE ── */
 if(window.EventSource){
   const es=new EventSource(`${API}/api/hq/events`);
-  es.onmessage=msg=>{try{const ev=JSON.parse(msg.data);if(ev.type==='AGENT_MOVE'||ev.type==='HANDOFF_CREATED')animateMove(ev.payload||{})}catch{}refresh();updateBadge();checkApprovals()};
+  es.onmessage=msg=>{try{const ev=JSON.parse(msg.data);
+    if(ev.type==='AGENT_MOVE'||ev.type==='HANDOFF_CREATED')animateMove(ev.payload||{});
+    if(ev.type==='task_started'){const el=document.getElementById('agent-'+ev.subject);if(el)el.classList.add('working');toast('⚙️ '+String(ev.payload?.title??'tarefa iniciada').slice(0,60))}
+    if(ev.type==='task_finished_ok')toast('✅ '+String(ev.subject??'agente')+' terminou');
+  }catch{}refresh();updateBadge();checkApprovals()};
   es.onerror=()=>{$('conn-status').textContent='RECONECTANDO'};
 }
 setTimeout(()=>$('zoom-fit').click(),300);

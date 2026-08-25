@@ -84,6 +84,14 @@ button{font-family:var(--sans);cursor:pointer;border:none;background:none;color:
 .agent.moving{z-index:40}.agent.moving .body{animation:wob .25s ease-in-out infinite}
 @keyframes wob{0%,100%{transform:translateX(-50%) rotate(-4deg)}50%{transform:translateX(-50%) rotate(4deg)}}
 
+/* ── WORKING VISUALS ── */
+.agent .bubble{position:absolute;bottom:calc(100% + 18px);left:50%;transform:translateX(-50%);background:#101c26;border:1px solid #2a4a5e;color:#d8ecfa;font:10px var(--mono);padding:5px 9px;border-radius:9px;white-space:nowrap;max-width:230px;overflow:hidden;text-overflow:ellipsis;box-shadow:0 4px 14px rgba(0,0,0,.45);z-index:60;animation:bpop .25s ease-out}
+.agent .bubble::after{content:'';position:absolute;top:100%;left:50%;margin-left:-5px;border:5px solid transparent;border-top-color:#2a4a5e}
+@keyframes bpop{from{opacity:0;transform:translateX(-50%) translateY(6px) scale(.92)}to{opacity:1;transform:translateX(-50%) translateY(0) scale(1)}}
+.desk-monitor.on::after{content:'';position:absolute;left:12%;top:16%;width:76%;height:62%;background:repeating-linear-gradient(0deg,rgba(120,220,180,.28) 0 3px,transparent 3px 7px);animation:crt .35s steps(2) infinite;border-radius:2px}
+@keyframes crt{50%{opacity:.55}}
+.st-working .nametag{color:#ffd98a;text-shadow:0 1px 6px #000}
+
 /* ── ZOOM ── */
 .zoom-controls{position:fixed;bottom:16px;left:16px;z-index:50;display:flex;flex-direction:column;gap:3px}
 .zoom-controls button{width:30px;height:30px;background:var(--surface);border:1px solid var(--border);border-radius:7px;font-size:14px;color:var(--muted);display:grid;place-items:center}

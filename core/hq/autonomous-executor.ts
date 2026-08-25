@@ -60,6 +60,11 @@ export async function executeNextTask(config: BrainConfig, taskId: number, agent
     const task = db.prepare("SELECT id,title,initiative_id,workspace,assigned_agent FROM initiative_tasks WHERE id=?").get(taskId) as {id:number;title:string;initiative_id:string;workspace:string|null;assigned_agent:string|null} | undefined;
     if (!task) throw new Error(`Task ${taskId} not found`);
 
+    // Mark as visibly running + broadcast so the office shows live work
+    db.prepare("UPDATE initiative_tasks SET status='RUNNING', started_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'), updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?").run(taskId);
+    const runningAgent = task.assigned_agent ?? agentId;
+    logEvent(db, 'task_started', runningAgent, { taskId, title: task.title });
+
     if (isDesignTask(task.title) || isProjectRecordTask(task.title)) {
       const agent = task.assigned_agent ?? 'designer-agent';
       const design = isProjectRecordTask(task.title)
@@ -71,6 +76,7 @@ export async function executeNextTask(config: BrainConfig, taskId: number, agent
       createNotification(db, design.status === 'COMPLETED'
         ? { type: 'task_completed', title: `✅ ${task.title}`, body: design.output.slice(0, 300), agentId: agent, taskId }
         : { type: 'task_failed', title: `❌ ${task.title}`, body: (design.error ?? 'Erro').slice(0, 300), agentId: agent, taskId });
+      db.prepare("INSERT INTO events (event_type,subject,payload) VALUES (?,?,'{}')").run(design.status === 'COMPLETED' ? 'task_finished_ok' : 'task_finished_fail', agent);
 
       let goalCompleteD = false;
       if (design.status === 'COMPLETED') {

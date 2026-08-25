@@ -48,6 +48,9 @@ export function getAgentOperationalState(db: DatabaseSync, agentId: string): Age
   if (run && ['RUNNING','PLANNING','EVALUATING','REWORKING'].includes(run.state)) {
     return { agentId, state: 'WORKING', reason: null, currentTask: task?.title ?? null, currentRunId: run.id, lastActivity };
   }
+  if (task && task.status === 'RUNNING') {
+    return { agentId, state: 'WORKING', reason: 'Executando tarefa', currentTask: task.title, currentRunId: run?.id ?? null, lastActivity };
+  }
   if (task && task.status === 'WAITING') {
     return { agentId, state: 'AWAITING_APPROVAL', reason: 'Task aguardando revisão', currentTask: task.title, currentRunId: run?.id ?? null, lastActivity };
   }
