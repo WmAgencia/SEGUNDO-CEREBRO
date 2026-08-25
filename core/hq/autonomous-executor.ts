@@ -6,6 +6,7 @@ import { createNotification } from "./notifications.ts";
 import { persistGoalKnowledge } from "../obsidian/knowledge-records.ts";
 import { getGoal, updateGoal } from "../goals/goal-engine.ts";
 import { generateImageAndArchive } from "../tools/image-tools.ts";
+import { generateVideoAndArchive } from "../tools/video-tools.ts";
 import { logEvent } from "../exec/execution-engine.ts";
 
 const NUTRIVA_WORKSPACE = path.resolve(process.cwd(), "apps", "nutriva");
@@ -19,18 +20,21 @@ export interface AutonomousResult {
   goalComplete: boolean;
 }
 
-/** Design tasks run through the internal image pipeline (Pollinations + Google Drive), not OpenCode. */
-function isDesignTask(title: string): boolean { return /^Gerar imagem:/i.test(title); }
+/** Creative tasks run through internal generation pipelines (Pollinations + Google Drive), not OpenCode. */
+function isDesignTask(title: string): boolean { return /^Gerar (imagem|v[íi]deo):/i.test(title); }
 
 async function executeDesignTask(taskTitle: string): Promise<{ status: 'COMPLETED'|'FAILED'; output: string; error?: string }> {
-  const prompt = taskTitle.replace(/^Gerar imagem:\s*/i, '');
-  const r = await generateImageAndArchive(prompt);
+  const isVideo = /^Gerar v[íi]deo:/i.test(taskTitle);
+  const prompt = taskTitle.replace(/^Gerar (imagem|v[íi]deo):\s*/i, '');
+  const r = isVideo ? await generateVideoAndArchive(prompt) : await generateImageAndArchive(prompt);
   if (r.status === 'GENERATED') {
-    const link = r.archived?.webViewLink ?? r.urls[0] ?? '';
-    const drive = r.archived?.status === 'ARCHIVED' ? `Arquivado no Drive: ${link}` : `Link da imagem: ${link}`;
-    return { status: 'COMPLETED', output: `Imagem gerada via ${r.model}. ${drive}` };
+    const fallbackUrl = 'urls' in r && r.urls.length > 0 ? r.urls[0]! : '';
+    const link = r.archived?.webViewLink ?? fallbackUrl;
+    const kind = isVideo ? 'Video' : 'Imagem';
+    const drive = r.archived?.status === 'ARCHIVED' ? `Arquivado no Drive: ${link}` : `Link: ${link}`;
+    return { status: 'COMPLETED', output: `${kind} gerada via ${r.model}. ${drive}` };
   }
-  return { status: 'FAILED', output: '', error: r.archived?.error ?? r.error ?? 'image generation failed' };
+  return { status: 'FAILED', output: '', error: r.archived?.error ?? r.error ?? 'generation failed' };
 }
 
 /**

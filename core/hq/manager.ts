@@ -384,11 +384,11 @@ export async function managerChat(config: BrainConfig, text: string, sessionKey 
     if (s.llmProposedPlan) { s.llmProposedPlan = false; return resp(s, 'Ok, plano descartado. O que você prefere?'); }
   }
 
-  // ── 3.5 DESIGN REQUESTS — deterministic planning, never depends on LLM markers ──
+  // ── 3.5 CREATIVE REQUESTS — deterministic planning, never depends on LLM markers ──
   // Latest intent wins: overwrite any stale pending plan.
-  const wantsImage = /\b(logo|imagem|banner|arte|ilustra[çc][ãa]o|criativo|thumbnail|capa)\b/i.test(t) && /\b(gere|gerar|crie|criar|faz|fa[çc]a|fazer)\b/i.test(t);
-  const pendingIsImage = /^Gerar imagem:/i.test(s.pending?.tasks[0] ?? '');
-  if (wantsImage && !pendingIsImage) {
+  const wantsVideo = /\b(v[íi]deo|videos|anima[çc][ãa]o|anime)\b/i.test(t) || /\b(gerar?|crie|criar?)\s+(um\s+)?v[íi]deo\b/i.test(t);
+  const wantsImage = !wantsVideo && /\b(logo|imagem|banner|arte|ilustra[çc][ãa]o|criativo|thumbnail|capa)\b/i.test(t) && /\b(gere|gerar|crie|criar|faz|fa[çc]a|fazer)\b/i.test(t);
+  if ((wantsImage || wantsVideo) && !/^Gerar (imagem|v[íi]deo):/i.test(s.pending?.tasks[0] ?? '')) {
     return doPropose(trimmed, s);
   }
 
@@ -494,18 +494,21 @@ function executeRealPlan(config: BrainConfig, s: ManagerSession): ManagerRespons
       `Documentar e finalizar ${topic}`,
     ];
 
-    // Design intent: route to Designer agent with a single image task
+    // Design intent: route to Designer agent with a single creative task
     const userMsgs = s.history.filter(h => h.role === 'user');
-    const imageMsg = [...userMsgs].reverse().find(h => /\b(logo|imagem|banner|arte|ilustra[çc][ãa]o|criativo|thumbnail|capa)\b/i.test(h.text));
-    const isImageRequest = Boolean(imageMsg) || /^Gerar imagem:/i.test(finalTasks[0] ?? '');
+    const videoMsg = [...userMsgs].reverse().find(h => /\b(v[íi]deo|videos|anima[çc][ãa]o)\b/i.test(h.text));
+    const imageMsg = !videoMsg && [...userMsgs].reverse().find(h => /\b(logo|imagem|banner|arte|ilustra[çc][ãa]o|criativo|thumbnail|capa)\b/i.test(h.text));
+    const creativeMsg = videoMsg ?? imageMsg;
+    const isImageRequest = Boolean(creativeMsg) || /^Gerar (imagem|v[íi]deo):/i.test(finalTasks[0] ?? '');
     let assignedAgent = 'engineering-agent';
-    if (isImageRequest && imageMsg) {
-      const imagePrompt = imageMsg.text
+    if (isImageRequest && creativeMsg) {
+      const wantsVideo = Boolean(videoMsg);
+      const imagePrompt = creativeMsg.text
         .replace(/^\s*designer\s*,?\s*/i, '')
-        .replace(/^(por\s+favor\s*)?(pode\s+)?(gere|gerar|crie|criar|faz|fa[çc]a|fazer)\s+/i, '')
+        .replace(/^(por\s+favor\s*)?(pode\s+)?(gere|gerar|crie|criar|faz|fa[çc]a|fazer)\s+(um\s+|uma\s+)?/i, '')
         .trim() || topic;
       finalTasks.length = 0;
-      finalTasks.push(`Gerar imagem: ${imagePrompt}`);
+      finalTasks.push(`${wantsVideo ? 'Gerar vídeo' : 'Gerar imagem'}: ${imagePrompt}`);
       assignedAgent = 'designer-agent';
     }
     if (assignedAgent === 'designer-agent' && !db.prepare("SELECT id FROM agents WHERE id='designer-agent'").get())
@@ -541,6 +544,7 @@ function classifyFallback(text: string, s: ManagerSession): ManagerIntent {
   if (/^(continue|retomar|resume)$/i.test(t)) return 'RESUME';
   if (/^(plane|brain|build)$/i.test(t)) return 'MODE_SWITCH';
   if (s.pending && /^(pode|executa|sim|vai|manda ver|go)\b/i.test(t)) return 'EXECUTION_CONFIRM';
+  if (/\b(v[íi]deo|videos|anima[çc][ãa]o)\b/i.test(t)) return 'GOAL_CREATION';
   if (/\b(logo|imagem|banner|arte|ilustra[çc][ãa]o|criativo|thumbnail|capa)\b/i.test(t) && /ger|cri|fa[çc]|faz/i.test(t)) return 'GOAL_CREATION';
   if (/(quero|precisamos|preciso)\s+(de\s+)?(faturar|alcançar|vender|criar)\s+/i.test(t) || /r\$\s*[\d.,]+/i.test(t)) return 'GOAL_CREATION';
   return 'CHAT';
@@ -552,11 +556,13 @@ function extractPlan(text: string): PendingPlan {
   const target = tm?.[1] ? Number(tm[1].replace(/\./g,'').replace(',','.')) : undefined;
   const isCommercial = /r\$|venda|vendas|faturar|receita|lead|prospec/i.test(t);
   const isNutriva = /nutriva/i.test(t);
-  const isImage = /\b(logo|imagem|banner|arte|ilustra[çc][ãa]o|criativo|thumbnail|capa)\b/i.test(t);
+  const wantsVideo = /\b(v[íi]deo|videos|anima[çc][ãa]o)\b/i.test(t);
+  const isImage = !wantsVideo && /\b(logo|imagem|banner|arte|ilustra[çc][ãa]o|criativo|thumbnail|capa)\b/i.test(t);
   let name = t.replace(/^(quero|precisamos|preciso|vamos)\s+(de\s+|a\s+)?/i,'').replace(/^(faturar|alcançar|atingir|criar)\s+/i,'').replace(/\s+até\s+.*$/i,'').replace(/\s+este\s+mês.*$/i,'').trim();
-  if (isImage) {
-    const prompt = name.replace(/^\s*designer\s*,?\s*/i,'').replace(/^(por\s+favor\s*)?(pode\s+)?(gere|gerar|crie|criar|faz|fa[çc]a|fazer)\s+/i,'').trim() || 'criativo solicitado';
-    return { goalName:`Imagem: ${prompt}`, goalType:'PROJECT', target, tasks:[`Gerar imagem: ${prompt}`], project:isNutriva?'nutriva':undefined };
+  if (wantsVideo || isImage) {
+    const prefix = wantsVideo ? 'Gerar vídeo' : 'Gerar imagem';
+    const prompt = name.replace(/^\s*designer\s*,?\s*/i,'').replace(/^(por\s+favor\s*)?(pode\s+)?(gere|gerar|crie|criar|faz|fa[çc]a|fazer)\s+(um\s+|uma\s+)?(logo\s+|imagem\s+|v[íi]deo\s+|anima[çc][ãa]o\s+)?/i,'').trim() || 'criativo solicitado';
+    return { goalName:`${wantsVideo?'Vídeo':'Imagem'}: ${prompt}`, goalType:'PROJECT', target, tasks:[`${prefix}: ${prompt}`], project:isNutriva?'nutriva':undefined };
   }
   if (!name) name = isCommercial ? 'Meta comercial' : 'Novo objetivo';
   const tasks = isCommercial
@@ -588,7 +594,7 @@ function doExecute(config: BrainConfig, s: ManagerSession): ManagerResponse {
     const init = createInitiative(db, { title:plan.goalName, description:'Plano via Command Center.', goalId:goal.id, project:plan.project??undefined, status:'PROPOSED' });
     planInitiative(db, init.id, plan.tasks);
     const ready = refreshQueue(db, init.id);
-    const isDesignPlan = /^Gerar imagem:/i.test(plan.tasks[0] ?? '');
+    const isDesignPlan = /^Gerar (imagem|v[íi]deo):/i.test(plan.tasks[0] ?? '');
     if (isDesignPlan && !db.prepare("SELECT id FROM agents WHERE id='designer-agent'").get())
       db.prepare("INSERT INTO agents (id,name,description,domains,capabilities,permissions,status) VALUES ('designer-agent','Designer','Criativos e imagens','[\"MARKETING\"]','[\"image_generation\"]','[\"context\",\"image_generate\",\"drive_upload\"]','AVAILABLE')").run();
     if (ready[0]!==undefined) assignTask(db, ready[0], { agentId:isDesignPlan?'designer-agent':'manager', reason:'Manager delegou primeira task' });
