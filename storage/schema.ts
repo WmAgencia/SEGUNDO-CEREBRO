@@ -1,4 +1,4 @@
-export const SCHEMA_VERSION = 20;
+export const SCHEMA_VERSION = 21;
 
 export interface Migration {
   from: number;
@@ -652,7 +652,7 @@ export const SCHEMA_STATEMENTS: readonly string[] = [
     confidence REAL,
      created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
    )`,
-  `CREATE TABLE IF NOT EXISTS agent_runs (
+   `CREATE TABLE IF NOT EXISTS agent_runs (
      id TEXT PRIMARY KEY, session_id TEXT NOT NULL, task_id INTEGER,
      initiative_id TEXT, agent_id TEXT NOT NULL, project_id TEXT,
      state TEXT NOT NULL DEFAULT 'IDLE', previous_state TEXT,
@@ -663,7 +663,8 @@ export const SCHEMA_STATEMENTS: readonly string[] = [
      tool_results TEXT NOT NULL DEFAULT '[]', last_successful_action TEXT,
      budgets TEXT NOT NULL DEFAULT '{}', usage TEXT NOT NULL DEFAULT '{}',
      correlation_id TEXT NOT NULL, causation_id TEXT,
-     kill_switch INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+     kill_switch INTEGER NOT NULL DEFAULT 0, heartbeat_at TEXT,
+     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
      updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
    )`,
   `CREATE TABLE IF NOT EXISTS agent_checkpoints (
@@ -948,6 +949,12 @@ export const MIGRATIONS: readonly Migration[] = [
          phone          TEXT,
          updated_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
        )`,
+    ],
+  },
+  {
+    from: 20,
+    statements: [
+      "ALTER TABLE agent_runs ADD COLUMN heartbeat_at TEXT",
     ],
   },
 ];

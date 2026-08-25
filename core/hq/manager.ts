@@ -11,6 +11,10 @@ import { completeWithGateway } from "../ai/model-router.ts";
 import { getAllAgentStates } from "./agent-state.ts";
 import { runInitiativeParallel } from "./orchestrator.ts";
 import { persistConversationNote } from "../obsidian/conversation-notes.ts";
+import { checkDailyBudget } from "../ai/cost-control.ts";
+
+/** Motivo do último bloqueio de LLM (budget) — para sinalização honesta no fallback. */
+let lastLlmBlockReason: string | null = null;
 
 export type ManagerMode = 'plane' | 'brain' | 'build';
 export type ManagerIntent = 'CHAT'|'QUESTION'|'IDEA'|'GOAL_CREATION'|'EXECUTION_CONFIRM'|'STOP'|'RESUME'|'STATUS'|'DIAGNOSIS'|'MODE_SWITCH'|'BRAIN_QUERY'|'IMAGE_REQUEST';
@@ -229,6 +233,19 @@ Regras:
 - NUNCA responda com templates genéricos como "quer que eu analise mais a fundo?" quando você já tem dados para responder.`;
 
 async function callLLM(config: BrainConfig, s: ManagerSession, userMessage: string): Promise<string | null> {
+  // Budget guard (spec §33): estourou limite diário → não chama LLM, sinaliza.
+  try {
+    const bdb = new DatabaseSync(config.dbPath);
+    try {
+      const budget = checkDailyBudget(bdb);
+      if (!budget.ok) {
+        lastLlmBlockReason = `budget diário excedido (US$${budget.spentToday.toFixed(2)} ≥ US$${budget.limitPerDay.toFixed(2)})`;
+        console.error(`[manager] LLM bloqueado: ${lastLlmBlockReason}`);
+        return null;
+      }
+    } finally { bdb.close(); }
+  } catch { /* db indisponível: segue sem guard */ }
+  lastLlmBlockReason = null;
   let context = buildSystemContext(config, s);
   // Free-tier models cap prompt tokens (~11k). Clamp the context so the call never 402s.
   const MAX_CONTEXT_CHARS = 9000;
@@ -645,12 +662,16 @@ export async function managerChat(config: BrainConfig, text: string, sessionKey 
     default: fallbackResult = fallbackResponse(config, trimmed, s); break;
   }
   persistMessage(config, sessionKey, 'manager', fallbackResult.message, s.mode, s.topic, s.lastBrainResult);
-  // Honestidade: se o LLM não está configurado, sinalizar explicitamente que a
-  // resposta veio do caminho determinístico — nunca fingir consulta ao LLM.
-  if (!process.env.OPENROUTER_API_KEY) {
+  // Honestidade: sinalizar por que a resposta veio do caminho determinístico.
+  if (lastLlmBlockReason) {
     fallbackResult.contextCards = [
       ...(fallbackResult.contextCards ?? []),
-      { label: 'LLM', value: 'não configurado — resposta determinística (OPENROUTER_API_KEY ausente)' },
+      { label: 'LLM', value: `bloqueado — ${lastLlmBlockReason}` },
+    ];
+  } else if (!process.env.OPENROUTER_API_KEY && !process.env.GROQ_API_KEY) {
+    fallbackResult.contextCards = [
+      ...(fallbackResult.contextCards ?? []),
+      { label: 'LLM', value: 'não configurado — resposta determinística' },
     ];
   }
   return fallbackResult;
