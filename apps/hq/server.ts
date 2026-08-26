@@ -184,9 +184,18 @@ const server = createServer((req, res) => {
           try {
             name = planInstanceForAgent(db, agentId, [...names]);
           } finally { db.close(); }
-          // garante a instância na Evolution
+          // garante a instância na Evolution; se a Evolution NÃO permitir criar
+          // novas (ex.: "Invalid integration"), usa a instância existente e a
+          // associa ao agente — o botão Conectar/Desconectar funciona com 1 ou N.
           if (!names.has(name)) {
-            await wa("/instance/create", { method: "POST", body: JSON.stringify({ instanceName: name }) }).catch(() => {});
+            const createRes = await wa("/instance/create", { method: "POST", body: JSON.stringify({ instanceName: name }) }).catch(() => null);
+            if (!createRes || !createRes.ok) {
+              const rn = (await (await wa("/instance/fetchInstances")).json()) as Array<{ name?: string; instanceName?: string }>;
+              const first = rn.find((i) => i.name ?? i.instanceName)?.name ?? rn[0]?.instanceName ?? "SECOM";
+              const fdb = new DatabaseSync(config.dbPath);
+              try { assignAgentToInstance(fdb, first, agentId); } finally { fdb.close(); }
+              name = first;
+            }
           }
           const getQr = async () => {
             const r = await wa(`/instance/connect/${name}`);
