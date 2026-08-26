@@ -13,3 +13,6 @@ core/second-brain.db-*
 secrets/
 *.log
 .DS_Store
+
+.vercel
+.env*
