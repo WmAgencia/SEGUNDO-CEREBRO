@@ -206,12 +206,23 @@ const SYSTEM_PROMPT = `Você é o Gerente do Second Brain OS, um sistema operaci
 Sua função:
 - Conversar naturalmente com o dono (Wesley) em português brasileiro.
 - Entender o que ele quer, mesmo quando usa pronomes ("isso", "aquilo", "ele") ou comandos curtos ("aprofunda", "continue", "faz").
-- Consultar o contexto fornecido abaixo para dar respostas baseadas em dados REAIS.
-- Quando o usuário pedir informações sobre projetos, tarefas ou agentes, use os dados do contexto.
-- Quando o usuário tiver uma ideia, ajude a estruturá-la.
-- Quando o usuário quiser criar um objetivo, propor um plano e peça confirmação.
+- CONSULTAR o contexto fornecido abaixo para dar respostas baseadas em dados REAIS.
+- Quando o usuário pedir informações sobre projetos, tarefas, agentes ou estado, RESPONDA direto com os dados do contexto. Não pergunte de volta.
+- Quando o usuário tiver uma ideia, ajude a estruturá-la e descubra o necessário.
+- Quando o usuário quiser criar um objetivo, proponha um plano e peça confirmação.
 - NUNCA invente dados que não estão no contexto.
-- Se o contexto não tiver a informação, diga que não encontrou e ofereça buscar.
+- Se o contexto não tiver a informação, diga que não encontrou (sem oferecer menu genérico).
+
+REGRA ANTI-REPETIÇÃO (CRÍTICA):
+- Se o usuário pedir "como está X", "o que aconteceu", "consulta o estado", "o que foi feito":
+  responda em UM parágrafo com os dados REAIS do contexto (status, tarefas, agentes, runs).
+  NUNCA termine com a pergunta "quer que eu aprofunde?", "quer que eu transforme em plano?",
+  "posso criar um objetivo?", "o que você prefere?".
+- Se você já respondeu sobre um assunto e o usuário INSISTE no mesmo tema, mude de ângulo:
+  dê MAIS detalhes ou relate progresso/estado — nunca repita a mesma pergunta.
+- Pelo contexto, identifique o assunto atual (projeto/goal/task) e responda dentro dele.
+  Ex.: "consulta o estado dele" = consulte o estado do projeto/goal que está em foco.
+
 - REGRA CRÍTICA: se o contexto listar objetivos, iniciativas, projetos ou tarefas, você DEVE citá-los
   quando perguntarem sobre eles. NUNCA afirme que "não há nada registrado" ou que "não existe nada"
   sobre um assunto se o contexto contém itens relacionados. Procure por palavras-chave do assunto
@@ -385,13 +396,38 @@ function answerOperationalStatus(db: DatabaseSync, t: string): string | null {
   return null;
 }
 
+/** Resumo curto e real do estado de um projeto/tópico (usado no anti-loop). */
+function projectStateLine(db: DatabaseSync, topic: string): string | null {
+  const like = `%${topic}%`;
+  const proj = db.prepare("SELECT id,name,status FROM projects WHERE LOWER(name) LIKE ? OR id LIKE ? LIMIT 1").get(like, like) as { id:string; name:string; status:string } | undefined;
+  if (!proj) {
+    // busca pela iniciativa
+    const init = db.prepare("SELECT title,status,project FROM initiatives WHERE LOWER(title) LIKE ? LIMIT 1").get(like) as { title:string; status:string; project:string|null } | undefined;
+    if (init) {
+      const open = db.prepare("SELECT COUNT(*) AS n FROM initiative_tasks WHERE initiative_id=(SELECT id FROM initiatives WHERE LOWER(title) LIKE ? LIMIT 1) AND status NOT IN ('COMPLETED','CANCELLED')").get(like) as { n:number };
+      return `Sobre "${init.title}" (${init.status}): ${open.n} tarefa(s) em aberto.`;
+    }
+    return null;
+  }
+  const pid = proj.id.replace(/^project\./, '');
+  const openTasks = db.prepare(
+    `SELECT COUNT(*) AS n FROM initiative_tasks t JOIN initiatives i ON i.id=t.initiative_id WHERE i.project=? AND t.status NOT IN ('COMPLETED','CANCELLED')`
+  ).get(pid) as { n:number };
+  const done = db.prepare(
+    `SELECT COUNT(*) AS n FROM initiative_tasks t JOIN initiatives i ON i.id=t.initiative_id WHERE i.project=? AND t.status='COMPLETED'`
+  ).get(pid) as { n:number };
+  const blocked = db.prepare(
+    `SELECT COUNT(*) AS n FROM initiative_tasks t JOIN initiatives i ON i.id=t.initiative_id WHERE i.project=? AND t.status='BLOCKED'`
+  ).get(pid) as { n:number };
+  return `Projeto "${proj.name}" (${proj.status}): ${openTasks.n} em aberto, ${done.n} concluída(s), ${blocked.n} bloqueada(s).`;
+}
+
 function fallbackResponse(config: BrainConfig, text: string, s: ManagerSession): ManagerResponse {
   const t = text.trim().toLowerCase().replace(/[.!?]+$/,'');
   const db = new DatabaseSync(config.dbPath);
 
   // Anti-loop: if this exact message was the last one, and we're about to repeat, change behavior
   const lastManagerMsg = s.history.filter(h => h.role === 'manager').slice(-1)[0]?.text ?? '';
-
   try {
     // ── STATUS OPERACIONAL (dados reais do sistema, determinístico) ──
     const statusAnswer = answerOperationalStatus(db, t);
@@ -532,16 +568,27 @@ function fallbackResponse(config: BrainConfig, text: string, s: ManagerSession):
       // Nothing paused: fall through to generic conversation instead of a hollow resume.
     }
 
-    // ── GENERIC (with anti-loop) ──
+    // ── GENERIC (com anti-loop: nunca repetir a pergunta) ──
     if (s.topic) {
-      // If the last manager message was the same generic topic prompt, try a different angle
-      if (lastManagerMsg.includes(`Sobre ${s.topic}`)) {
-        return resp(s, `Sobre ${s.topic} — posso criar um objetivo, consultar o Second Brain para mais detalhes, ou verificar o status das tarefas. O que você prefere?`);
-      }
-      return resp(s, `Sobre ${s.topic} — quer que eu aprofunde, transforme em plano, ou consulte o Second Brain?`);
+      // Responde com estado REAL do tópico em vez de perguntar de volta.
+      const state = projectStateLine(db, s.topic);
+      if (state) return resp(s, state);
+      return resp(s, `Estamos falando sobre ${s.topic}. O que você gostaria de fazer nesse assunto?`);
     }
 
-    return resp(s, 'Entendi. Posso ajudar de forma mais específica se você me disser o que quer: criar um objetivo, consultar um projeto, verificar status, ou conversar sobre estratégia.');
+    // ── GENERIC FINAL (anti-loop: variar e usar dados, nunca repetir) ──
+    if (s.topic) {
+      const state = projectStateLine(db, s.topic);
+      if (state) return resp(s, state);
+    }
+    // Variedade de abertura do fallback — nunca repetir a mesma frase.
+    const openers = [
+      'Entendi. Posso ajudar. O que você quer que eu faça primeiro: consultar o estado de um projeto, criar um objetivo ou verificar as tarefas?',
+      'Certo. Me conta um pouco mais: esses assuntos estão ligados a algum projeto específico que eu deva priorizar?',
+      'Ok. Pelo que tenho no contexto, posso consultar o Second Brain ou verificar o que está em andamento. Por onde prefere começar?',
+    ];
+    const idx = Math.abs(s.history.length) % openers.length;
+    return resp(s, openers[idx]!);
   } finally { db.close(); }
 }
 
@@ -618,11 +665,10 @@ export async function managerChat(config: BrainConfig, text: string, sessionKey 
     return doPropose(trimmed, s);
   }
 
-  // ── 3.6 OPERATIONAL STATUS — deterministic, before any LLM call ──
-  const statusAnswer = tryAnswerStatus(config, t);
-  if (statusAnswer) return resp(s, statusAnswer);
-
-  // ── 4. Call LLM for natural conversation ──
+  // ── 4. LLM-FIRST — o LLM decide o significado da mensagem no contexto ──
+  // Perguntas de estado, pedidos de consulta, ideias e conversa livre vão ao LLM
+  // ANTES de qualquer roteador determinístico. Se o LLM estiver disponível ele
+  // responde com dados reais (goals/tasks/agents/runs) e NÃO repete perguntas.
   const llmResponse = await callLLM(config, s, trimmed);
   if (llmResponse && llmResponse.trim()) {
     s.history.push({ role:'manager', text:llmResponse });
@@ -682,14 +728,16 @@ export async function managerChat(config: BrainConfig, text: string, sessionKey 
   return fallbackResult;
 }
 
-function extractTopic(text: string): string {
+function extractTopic(text: string): string | null {
   const t = text.toLowerCase();
   if (/nutriva/i.test(t)) return 'nutriva';
   if (/vyntra/i.test(t)) return 'vyntra';
+  if (/clipcom|clipcon/i.test(t)) return 'clipcom';
+  if (/sueli|psicanalista|psic[óo]loga/i.test(t)) return 'sueli';
   if (/prospec|lead/i.test(t)) return 'prospecção';
   if (/venda|faturar|receita/i.test(t)) return 'vendas';
   if (/marketing|campanha/i.test(t)) return 'marketing';
-  return text.slice(0, 40);
+  return null;
 }
 
 /**

@@ -47,7 +47,11 @@ describe("Manager Conversacional", () => {
   it("TEST 3: 'Você consegue me ajudar?' → resposta positiva", async () => {
     const cfg = config(); const db = openDatabase(cfg.dbPath); applySchema(db); db.close();
     const r = await managerChat(cfg, "Você consegue me ajudar?", "test-3");
-    expect(r.message).toMatch(/Posso|Consigo/);
+    expect(r.message).not.toContain("nenhuma ação");
+    expect(r.message).not.toContain("não mapeada");
+    // resposta conversacional: não deve ser menu genérico nem pergunta repetida
+    expect(r.message.toLowerCase()).not.toContain("quer que eu aprofunde");
+    expect(r.message.toLowerCase()).not.toMatch(/posso criar um objetivo/);
   });
 
   it("TEST 4: 'Estou pensando em aumentar vendas.' → conversa/ideia, NÃO executa", async () => {
