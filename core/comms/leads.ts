@@ -142,6 +142,8 @@ export interface SaveLeadInput {
   country?: string;
   signals?: string[];
   evidence?: string[];
+  scoreOverride?: number;
+  statusOverride?: LeadStatus;
 }
 
 export type SaveLeadResult =
@@ -171,8 +173,8 @@ export function saveLead(db: DatabaseSync, input: SaveLeadInput): SaveLeadResult
   }
 
   const id = leadId(input.companyName, input.source);
-  const { score } = scoreLeadSignals(input.signals ?? []);
-  const status: LeadStatus = score >= 40 ? "QUALIFIED" : "NEW";
+  const { score } = input.scoreOverride !== undefined ? { score: input.scoreOverride } : scoreLeadSignals(input.signals ?? []);
+  const status: LeadStatus = input.statusOverride ?? (score >= 40 ? "QUALIFIED" : "NEW");
 
   db.prepare(
     `INSERT INTO leads (id, company_name, contact_name, phone, email, website, instagram, linkedin, tiktok,
