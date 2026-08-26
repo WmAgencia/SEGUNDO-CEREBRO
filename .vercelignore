@@ -1,0 +1,22 @@
+node_modules/
+data/
+skills-sources/
+tools/
+secrets/
+core/
+storage/
+connectors/
+config/
+mcp/
+schemas/
+tests/
+scripts/
+docs/
+apps/nutriva/
+apps/cli/
+webhook-live.log
+*.db
+*.db-wal
+*.db-shm
+*.log
+# mantém o frontend do HQ e seus assets
