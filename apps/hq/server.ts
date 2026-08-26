@@ -172,34 +172,7 @@ const server = createServer((req, res) => {
           const connData = (await conn.json()) as Record<string, unknown>;
           return send(201, { name, ...connData });
         }
-        const connectMatch = sub.match(/^\/connect\/(.+)$/);
-        if (req.method === "GET" && connectMatch) {
-          const name = decodeURIComponent(connectMatch[1]!);
-          const getQr = async () => {
-            const r = await wa(`/instance/connect/${name}`);
-            const j = (await r.json()) as Record<string, unknown>;
-            const code = String((j as { code?: string }).code ?? (j as { qrcode?: { code?: string } }).qrcode?.code ?? "");
-            return { r, j, code };
-          };
-          let { r, j, code } = await getQr();
-
-          // SELF-HEALING: QR idêntico ao anterior = sessão presa ('connecting').
-          // Fecha (logout) e reconecta para emitir um QR REALMENTE novo.
-          if (code && lastQrByInstance.get(name) === code) {
-            process.stdout.write(`[wa] QR preso p/ ${name} — regenerando (logout+connect)\n`);
-            await wa(`/instance/logout/${name}`, { method: "DELETE" }).catch(() => {});
-            await new Promise((resolve) => setTimeout(resolve, 1200));
-            ({ r, j, code } = await getQr());
-          }
-          if (code) lastQrByInstance.set(name, code);
-          return send(r.status, j);
-        }
-        const stateMatch = sub.match(/^\/state\/(.+)$/);
-        if (req.method === "GET" && stateMatch) {
-          const r = await wa(`/instance/connectionState/${stateMatch[1]}`);
-          return send(r.status, await r.json());
-        }
-        // ── CONEXÃO POR AGENTE: garante uma instância dedicada ao atendente e retorna QR ──
+        // ── CONEXÃO POR AGENTE (mais específico) — instância DEDICADA por atendente ──
         const connectAgentMatch = sub.match(/^\/connect\/agent\/(.+)$/);
         if (req.method === "GET" && connectAgentMatch) {
           const agentId = decodeURIComponent(connectAgentMatch[1]!);
@@ -229,6 +202,34 @@ const server = createServer((req, res) => {
           }
           if (code) lastQrByInstance.set(name, code);
           return send(r.status, { ...j, assignedAgent: agentId, waName: name });
+        }
+        // ── CONEXÃO DIRETA (nome da instância) — não captura /connect/agent/ ──
+        const connectMatch = sub.match(/^\/connect\/(?!agent\/)(.+)$/);
+        if (req.method === "GET" && connectMatch) {
+          const name = decodeURIComponent(connectMatch[1]!);
+          const getQr = async () => {
+            const r = await wa(`/instance/connect/${name}`);
+            const j = (await r.json()) as Record<string, unknown>;
+            const code = String((j as { code?: string }).code ?? (j as { qrcode?: { code?: string } }).qrcode?.code ?? "");
+            return { r, j, code };
+          };
+          let { r, j, code } = await getQr();
+
+          // SELF-HEALING: QR idêntico ao anterior = sessão presa ('connecting').
+          // Fecha (logout) e reconecta para emitir um QR REALMENTE novo.
+          if (code && lastQrByInstance.get(name) === code) {
+            process.stdout.write(`[wa] QR preso p/ ${name} — regenerando (logout+connect)\n`);
+            await wa(`/instance/logout/${name}`, { method: "DELETE" }).catch(() => {});
+            await new Promise((resolve) => setTimeout(resolve, 1200));
+            ({ r, j, code } = await getQr());
+          }
+          if (code) lastQrByInstance.set(name, code);
+          return send(r.status, j);
+        }
+        const stateMatch = sub.match(/^\/state\/(.+)$/);
+        if (req.method === "GET" && stateMatch) {
+          const r = await wa(`/instance/connectionState/${stateMatch[1]}`);
+          return send(r.status, await r.json());
         }
         // ── DESCONECTAR (logout) ──
         const disconnectMatch = sub.match(/^\/disconnect\/(.+)$/);
