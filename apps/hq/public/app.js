@@ -114,6 +114,9 @@ async function refreshLiveLog(){
 }
 const AGENT_ROLES={'engineering-agent':'Agente Desenvolvedor — constrói sites e sistemas','designer-agent':'Agente Designer — cria imagens e vídeos','marketing-agent':'Agente Marketing — estratégia e campanhas','prospector-agent':'Agente Prospector — busca clientes no mercado','research-agent':'Agente Pesquisa — investiga e sintetiza informações','social-media-agent':'Agente Mídias Sociais — calendário e publicação','traffic-agent':'Agente Tráfego Pago — métricas e orçamento de anúncios','sales-agent-01':'Agente Atendente 1 — atendimento e follow-up','sales-agent-02':'Agente Atendente 2 — atendimento e follow-up','sales-agent-03':'Agente Atendente 3 — atendimento e follow-up','sales-agent-04':'Agente Atendente 4 — atendimento e follow-up','maintenance-agent':'Agente Manutenção — limpeza e saúde do sistema','manager':'Gerente — planejamento, delegação e avaliação'};
 
+/* Atendentes têm botão "Conectar" (WhatsApp/Evolution) no perfil */
+function isSales(aid){return /^sales-agent-0\d$/.test(String(aid||''))}
+
 async function openProfile(aid){
   $('profile-panel').classList.add('open');$('profile-content').innerHTML='<p class="muted">Carregando…</p>';
   try{
@@ -132,12 +135,22 @@ async function openProfile(aid){
         ${live.blockers?`<p style="color:#ff8f96;font-weight:600">⛔ ${live.blockers} bloqueio(s)</p>`:''}
         ${!live.currentTask&&!live.lastAction?'<p class="muted">Disponível — sem trabalho atribuído.</p>':''}
       </div>`;
+    const waSec=isSales(aid)?`
+      <div class="p-sec"><h4>WhatsApp</h4>
+        <button class="btn primary block" id="profile-wa-connect">📱 Conectar WhatsApp</button>
+        <div id="profile-wa-state" class="muted-sm" style="margin-top:6px"></div>
+      </div>`:'';
     $('profile-content').innerHTML=`
       <div class="p-sec"><h4>${esc(p.agent.name)}</h4><p class="p-role">${esc(role)}</p><p style="margin-top:4px;font-size:13px">${esc(stPt(p.agent.status))}</p></div>
       ${liveHtml}
+      ${waSec}
       <div class="p-sec"><h4>Tarefas</h4>${(p.tasks??[]).map(t=>`<div class="p-item"><b>${esc(t.title)}</b><small>${esc(stPt(t.status))}</small></div>`).join('')||'<p class="muted">Nenhuma.</p>'}</div>
       <div class="p-sec"><h4>Handoffs</h4>${(p.handoffs??[]).map(h=>`<div class="p-item">${esc(h.from_agent)} → ${esc(h.to_agent)}<small>${esc(h.summary.slice(0,50))}</small></div>`).join('')||'<p class="muted">Nenhum.</p>'}</div>
       <div class="p-sec"><h4>Runs</h4>${(p.runs??[]).map(r=>`<div class="p-item">${esc(r.id.slice(0,22))}<small>${esc(r.state)}</small></div>`).join('')||'<p class="muted">Nenhum.</p>'}</div>`;
+    if(isSales(aid)){
+      $('profile-wa-connect').addEventListener('click',()=>openWaConnect(aid));
+      refreshProfileWaState(aid);
+    }
     // Log ao vivo + rename
     $('agent-live-log-wrap').style.display='block';
     $('agent-rename-wrap').style.display='block';
@@ -338,6 +351,54 @@ $('wa-create').addEventListener('click',async()=>{
 function openWaPopup(){$('wa-overlay').classList.add('open');waLoad();if(waPollTimer)clearInterval(waPollTimer);waPollTimer=setInterval(waLoad,8000)}
 $('wa-close').addEventListener('click',()=>{$('wa-overlay').classList.remove('open');if(waPollTimer){clearInterval(waPollTimer);waPollTimer=null}});
 document.addEventListener('click',(e)=>{const t=e.target.closest('[data-wa-computer]');if(t){e.stopPropagation();openWaPopup()}});
+
+/* ── Conexão WhatsApp unitária (Atendente) ── */
+let waConnectAgent=null,waConnectPoll=null;
+async function profileAgentInstances(aid){
+  // instância da Evolution associada a este atendente (assigned_agent) ou a 1ª disponível
+  try{
+    const r=await(await fetch(`${API}/api/whatsapp/instances`)).json();
+    const list=r.instances??[];
+    return list.find(i=>String(i.assignedAgent||'')===aid)||list[0]||{name:null,state:'unknown'};
+  }catch{return {name:null,state:'unknown'}}
+}
+async function refreshProfileWaState(aid){
+  const el=$('profile-wa-state');if(!el)return;
+  const inst=await profileAgentInstances(aid);
+  if(!inst.name){el.textContent='Nenhuma conexão criada — clique em Conectar.';return}
+  const open=String(inst.state).toLowerCase().includes('open');
+  el.textContent=open?`✅ Conectado (${inst.name})`:`Status: ${esc(inst.state)}`;
+}
+async function waConnectLoad(){
+  const agent=waConnectAgent;if(!agent)return;
+  const instEl=$('wa-connect-instance'),qr=$('wa-connect-qr'),hint=$('wa-connect-hint');
+  if(instEl)instEl.textContent=`Atendente: ${agent}`;
+  try{
+    const r=await(await fetch(`${API}/api/whatsapp/instances`)).json();
+    const list=r.instances??[];
+    const inst=list.find(i=>String(i.assignedAgent||'')===agent)||list[0];
+    if(instEl&&inst)instEl.textContent=`${inst.name} — Atendente: ${agent}`;
+    let url=null;
+    if(inst){url=await fetchQr(inst.name)}
+    if(url){if(qr){qr.src=url;qr.style.display='inline'}if(hint)hint.textContent='✔ QR gerado — escaneie com o WhatsApp deste atendente.'}
+    else{if(qr){qr.style.display='none'}if(hint)hint.textContent=inst?`Sem QR disponível (${inst.state}) — se já conectou, atualize.`:'Nenhuma instância ainda. Crie uma em Conexões WhatsApp.'}
+  }catch(e){if(hint)hint.textContent='Evolution API indisponível — '+esc(e.message)}
+}
+function openWaConnect(agent){
+  waConnectAgent=agent;
+  $('wa-connect-overlay').classList.add('open');
+  if(waConnectPoll)clearInterval(waConnectPoll);
+  waConnectLoad();
+  waConnectPoll=setInterval(waConnectLoad,4000);
+}
+function closeWaConnect(){
+  $('wa-connect-overlay').classList.remove('open');
+  if(waConnectPoll){clearInterval(waConnectPoll);waConnectPoll=null}
+}
+$('wa-connect-close').addEventListener('click',closeWaConnect);
+$('wa-connect-again').addEventListener('click',()=>{toast('🔄 Gerando novo QR…');waConnectLoad()});
+// fechar ao clicar fora do modal
+document.addEventListener('click',(e)=>{if(e.target.id==='wa-connect-overlay')closeWaConnect()});
 
 /* ── SSE ── */
 if(window.EventSource){

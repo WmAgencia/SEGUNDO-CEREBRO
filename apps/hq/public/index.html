@@ -83,6 +83,20 @@
   </div>
 </div>
 
+<!-- Single WhatsApp connect popup (Atendente) -->
+<div class="overlay" id="wa-connect-overlay">
+  <div class="modal wa-modal">
+    <div class="row-between"><h2>📱 Conectar WhatsApp</h2><button class="btn ghost sm" id="wa-connect-close">✕</button></div>
+    <p class="muted-sm" style="margin-bottom:12px">Escaneie o QR Code abaixo com o WhatsApp do atendente para liberar a conversa.</p>
+    <div class="wa-connect-box">
+      <div class="wa-connect-instance" id="wa-connect-instance">—</div>
+      <img class="wa-qr" id="wa-connect-qr" alt="QR Code de conexão">
+      <p class="wa-connect-hint" id="wa-connect-hint">Gerando QR Code…</p>
+      <button class="btn wa-connect-again" id="wa-connect-again">🔄 Atualizar QR</button>
+    </div>
+  </div>
+</div>
+
   <div class="toast" id="toast"></div>
 
   <!-- Notifications Panel -->

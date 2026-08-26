@@ -111,7 +111,23 @@ button{font-family:var(--sans);cursor:pointer;border:none;background:none;color:
 .decor.wa-computer span::after{content:'📱';position:absolute;inset:0;display:grid;place-items:center;font-size:10px}
 @keyframes waglow{0%,100%{box-shadow:0 0 0 rgba(84,164,255,0)}50%{box-shadow:0 0 14px rgba(84,164,255,.45)}}
 .wa-modal{width:min(560px,94vw)}
-.wa-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px}
+/* base de modais (overlay + caixa + utilidades) — faltava, quebrava wa-overlay/approval-overlay */
+.overlay{position:fixed;inset:0;background:rgba(4,8,12,.72);display:none;align-items:center;justify-content:center;z-index:400;backdrop-filter:blur(3px)}
+.overlay.open{display:flex}
+.modal{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:20px;width:min(440px,94vw);max-height:88vh;overflow-y:auto;box-shadow:0 30px 80px rgba(0,0,0,.5)}
+.modal-head{margin-bottom:12px}
+.row-between{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+.muted-sm{font:9px var(--mono);color:var(--muted)}
+.empty{text-align:center;color:var(--muted);font:11px var(--sans);padding:22px 8px}
+.btn.sm{padding:3px 8px;font:500 8px var(--mono)}
+.btn.block{display:block;width:100%;text-align:center}
+/* popup de conexão unitário (atendente) */
+.wa-connect-box{display:flex;flex-direction:column;align-items:center;gap:10px;padding:6px 0}
+.wa-connect-box .wa-qr{width:230px;height:230px;padding:8px}
+.wa-connect-instance{font:500 11px var(--mono);color:var(--accent);letter-spacing:.4px}
+.wa-connect-hint{font:10px var(--sans);color:var(--muted);text-align:center;line-height:1.5}
+.btn.wa-connect-again{border:1px solid var(--border);color:var(--muted)}
+.btn.wa-connect-again:hover{border-color:var(--accent);color:var(--accent)}.wa-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px}
 .wa-card{border:1px solid var(--line,#22303c);border-radius:12px;padding:13px;background:#101a23;display:flex;flex-direction:column;align-items:center;gap:8px;text-align:center}
 .wa-name{font-weight:600;font-size:13.5px}
 .wa-state{font-size:12px;font-weight:700;padding:2px 10px;border-radius:99px}
