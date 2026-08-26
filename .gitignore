@@ -1,15 +1,15 @@
+.vercel
+.env
+.env.local
+.env.*.local
+*.key
+*.pem
+*.p12
+*.pfx
+*.crt
 node_modules/
-data/
+core/second-brain.db
+core/second-brain.db-*
+secrets/
 *.log
 .DS_Store
-dist/
-coverage/
-tools/
-!core/tools/
-!core/tools/tool-registry.ts
-skills-sources/
-#env
-.env.local
-
-# Google Drive service account key
-secrets/
