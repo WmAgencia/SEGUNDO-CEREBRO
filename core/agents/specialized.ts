@@ -21,7 +21,7 @@ export const SPECIALIZED_AGENTS: readonly SpecializedAgentDefinition[] = [
   { id: "maintenance-agent", name: "Manutenção", department: "MANUTENÇÃO", responsibilities: ["limpeza", "saúde"], permissions: ["context"] },
 ];
 
-export interface LeadCandidate { company: string; contact: string | null; website: string | null; source: string; niche: string | null; location: string | null; signals: string[]; score: number; evidence: string[]; }
+export interface LeadCandidate { company: string; contact: string | null; website: string | null; source: string; niche: string | null; location: string | null; signals: string[]; score: number; evidence: string[]; phone?: string | null; email?: string | null; instagram?: string | null; linkedin?: string | null; city?: string | null; state?: string | null; country?: string | null; }
 export interface ProspectingSource { readonly name: string; search(query: string): Promise<LeadCandidate[]>; }
 export class NotConfiguredProspectingSource implements ProspectingSource { readonly name = "not-configured"; async search(_query: string): Promise<LeadCandidate[]> { throw new Error("PROSPECTING_SOURCE_NOT_CONFIGURED"); } }
 export interface SocialPlatform { readonly name: string; publish(content: string): Promise<{ status: "NOT_CONFIGURED" | "PUBLISHED"; id?: string }>; }
