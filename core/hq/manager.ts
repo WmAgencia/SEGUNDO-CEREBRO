@@ -51,6 +51,11 @@ export function classifyCreativeIntent(text: string): 'dev'|'image'|'video'|'non
   if (explicitCorrection && devDeliverable) return 'dev';
 
   const buildVerb = /\b(criar?|crie|cria[çc][ãa]o|desenvolver|desenvolve|programar?|construir|montar|codificar|implementar|iniciar|inicia|come[çc]ar|fazer|faz|fa[çc]a)\b/i.test(t);
+  // MOLDURA DE PROSPECÇÃO: falar em "empresas que não têm site", "para vender
+  // sites", "clientes sem presença digital" é DESCREVER LEADS, não pedir build.
+  // Nesses casos "site" não é entrega — é o sinal de oportunidade do cliente.
+  const prospectingFrame = /(n[ãa]o\s+(tem|possui|ter|t[eê]m)|sem\s+site|sem\s+presen[çc]a\s+digital|para\s+vender|vender\s+site|encontr[ea]r?\s+(empresas|neg[óo]cios|clientes)|empresas\s+que|clientes\s+que|neg[óo]cios\s+que|que\s+n[ãa]o\s+t[eê]m\s+(um\s+)?site|ainda\s+n[ãa]o\s+tem)/i.test(t);
+  if (devDeliverable && buildVerb && prospectingFrame) return 'none';
   if (devDeliverable && buildVerb) return 'dev';
 
   const wantsVideo = /\b(v[íi]deo|videos|anima[çc][ãa]o)\b/i.test(t);
