@@ -6,15 +6,16 @@ import { openDatabase, applySchema } from "../storage/connection.ts";
 import { managerChat } from "../core/hq/manager.ts";
 import type { BrainConfig } from "../core/config/loader.ts";
 
-// ⚠️ TESTE LLM REAL — só roda quando GROQ_API_KEY está presente (opt-in).
-// Carrega .env.local no topo (vitest não o faz) para setar hasGroq cedo.
+// ⚠️ TESTE LLM REAL — roda SOMENTE quando GROQ_API_KEY está presente E
+// MANAGER_LLM_TESTS=1 foi setado explicitamente (evita ser puxado por outros
+// testes que apagam/alteram o env em execução em paralelo).
 try {
   for (const line of readFileSync("C:/Users/junin/second-brain/.env.local", "utf8").split(/\r?\n/)) {
     const m = line.match(/^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/);
     if (m && m[1] && m[2] !== undefined && !process.env[m[1]]) process.env[m[1]] = m[2].trim();
   }
 } catch {}
-const hasGroq = Boolean(process.env.GROQ_API_KEY && !process.env.VITEST_SKIP_LLM);
+const hasGroq = Boolean(process.env.GROQ_API_KEY && !process.env.VITEST_SKIP_LLM && /^(1|true|yes)$/i.test(process.env.MANAGER_LLM_TESTS ?? ""));
 
 let dir: string;
 let config: BrainConfig;

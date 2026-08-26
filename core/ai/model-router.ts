@@ -1,5 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 import type { CompletionRequest, CompletionResult, LLMProvider } from "./llm-provider.ts";
+import { GroqKeyPool } from "./groq-key-pool.ts";
 
 export type ModelWorkload = "chat" | "reasoning" | "research" | "coding" | "vision" | "image" | "fast";
 export interface ModelRoute { provider: string; model: string; reason: string; estimatedCost: number | null; fallbackChain: string[]; }
@@ -70,10 +71,39 @@ export class GroqProvider implements LLMProvider {
   }
 }
 
-/** Cadeia de providers padrão: Groq (se configurado) → OpenRouter. Nunca esconde erro do provider. */
+/** Carrega as chaves Groq de GROQ_API_KEY_1..N (fallback: GROQ_API_KEY única). */
+export function loadGroqKeys(): string[] {
+  const keys: string[] = [];
+  for (let i = 1; i <= 8; i++) {
+    const k = process.env[`GROQ_API_KEY_${i}`];
+    if (k && k.trim()) keys.push(k.trim());
+  }
+  if (keys.length === 0 && process.env.GROQ_API_KEY) keys.push(process.env.GROQ_API_KEY.trim());
+  return keys;
+}
+
+/** Provider Groq com pool de chaves — rotação/cooldown/retry automáticos. */
+export class GroqPoolProvider implements LLMProvider {
+  readonly name = "groq";
+  readonly model: string;
+  readonly pool: GroqKeyPool;
+  constructor(options: { keys?: string[]; model?: string; baseUrl?: string } = {}) {
+    const model = options.model ?? process.env.GROQ_MODEL ?? process.env.SECOND_BRAIN_GROQ_MODEL ?? "openai/gpt-oss-120b";
+    this.model = model;
+    this.pool = new GroqKeyPool({ keys: options.keys ?? loadGroqKeys(), model, baseUrl: options.baseUrl });
+  }
+  async isAvailable(): Promise<boolean> { return this.pool.size > 0; }
+  async complete(request: CompletionRequest): Promise<CompletionResult> {
+    const { result } = await this.pool.complete(request);
+    return result;
+  }
+}
+
+/** Cadeia de providers padrão: Groq (pool) → OpenRouter. Nunca esconde erro do provider. */
 export function defaultProviderChain(route = selectModel({})): LLMProvider[] {
   const chain: LLMProvider[] = [];
-  if (process.env.GROQ_API_KEY) chain.push(new GroqProvider());
+  const groqKeys = loadGroqKeys();
+  if (groqKeys.length > 0) chain.push(new GroqPoolProvider({ keys: groqKeys, model: route.model }));
   if (process.env.OPENROUTER_API_KEY) chain.push(new OpenRouterProvider(route));
   if (chain.length === 0) chain.push(new OpenRouterProvider(route));
   return chain;

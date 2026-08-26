@@ -433,11 +433,11 @@ function fallbackResponse(config: BrainConfig, text: string, s: ManagerSession):
     const statusAnswer = answerOperationalStatus(db, t);
     if (statusAnswer) return resp(s, statusAnswer);
     // ── GREETINGS (including variants with spaces) ──
-    if (/^(oi+|olá|ola|hey|e\s+a[íi]|eai|e\s+ai|bom dia|boa tarde|boa noite|opa|fala)\b/i.test(t))
-      return resp(s, 'Oi! Sou o Gerente. Posso conversar sobre estratégia, criar objetivos, consultar o Second Brain e coordenar os agentes. Sobre o que quer falar?');
-
-    if (/(tudo bem|tudo certo|como vai|como você está|belez)/i.test(t))
-      return resp(s, 'Tudo funcionando. Tenho acesso ao banco de dados, aos agentes e ao Second Brain. O que você quer fazer?');
+    if (/^(oi+|olá|ola|ey|ei|e\s*aí|eai|e\s*ai|hey|haha|opa|fala|bom\s*dia|boa\s*tarde|boa\s*noite)\b/i.test(t)
+      || /^(tudo\s*bem|tudo\s*certo|como\s*vai|vc\s*est[aá]?\s*a[ií]|você\s*est[aá]?\s*a[ií])\b/i.test(t)) {
+      s.topic = null; // saudação → conversa nova, não fica preso ao último projeto
+      return resp(s, 'Oi, Wesley. Estou aqui — qual assunto você quer trabalhar? (projeto, estratégia, prospecção...)');
+    }
 
     // ── AFFIRMATIVE WITHOUT PENDING PLAN ──
     // User says "sim" but there's no pending plan → check if we can aprofunde or execute last context
@@ -573,7 +573,14 @@ function fallbackResponse(config: BrainConfig, text: string, s: ManagerSession):
       // Responde com estado REAL do tópico em vez de perguntar de volta.
       const state = projectStateLine(db, s.topic);
       if (state) return resp(s, state);
-      return resp(s, `Estamos falando sobre ${s.topic}. O que você gostaria de fazer nesse assunto?`);
+      // variação — nunca repetir "Estamos falando sobre X":
+      const topicIdle = [
+        `Sobre ${s.topic}: estou com o contexto aqui. Quer que eu analise um ponto específico, monte uma estratégia ou verifique o estado atual?`,
+        `Ok, ${s.topic} está em pauta. Podemos olhar o que já existe no Second Brain, ou planejar o próximo passo. O que prefere?`,
+        `Entendido — foco em ${s.topic}. Me diz o que quer: aprofundar um tema, montar um plano ou executar algo.`,
+      ];
+      const idx = Math.abs(s.history.length) % topicIdle.length;
+      return resp(s, topicIdle[idx]!);
     }
 
     // ── GENERIC FINAL (anti-loop: variar e usar dados, nunca repetir) ──
@@ -615,16 +622,21 @@ export async function managerChat(config: BrainConfig, text: string, sessionKey 
   persistMessage(config, sessionKey, 'user', trimmed, s.mode, s.topic, s.lastBrainResult);
   const t = trimmed.toLowerCase().replace(/[.!?]+$/,'');
 
-  // ── 0. GREETINGS (natural conversation, always deterministic) ──
-  if (/^(oi+|olá|ola|hey|e\s+a[íi]|eai|e\s+ai|bom dia|boa tarde|boa noite|opa|fala)\b/i.test(t)) {
+  // ── 0. GREETINGS (conversa pura — SEMPRE limpa o tópico anterior) ──
+  const isGreeting = /^(oi+|olá|ola|ey|ei|e\s*aí|eai|e\s*ai|hey|haha|opa|fala|bom\s*dia|boa\s*tarde|boa\s*noite|bom\s*dia!?)\b/i.test(t)
+    || /^(tudo\s*bem|tudo\s*certo|como\s*vai|como\s*você\s*est|você\s*est[aá]*\s*a[ií]|você\s*est[aá]?\s*a?[ií]?)\b/i.test(t)
+    || /^(vc\s*est[aá]?\s*a[ií]|ce\s*est[aá]?\s*a[ií])\b/i.test(t);
+  if (isGreeting) {
     const greetings = [
-      "Oi! Sou o Gerente. Posso conversar sobre estratégia, criar objetivos, consultar o Second Brain e coordenar os agentes. Sobre o que quer falar?",
-      "Olá! Tudo bem. Tenho acesso ao banco de dados, aos agentes e ao Second Brain. O que você quer fazer?",
-      "Oi! tudo funcionando. Tenho acesso ao banco de dados, aos agentes e ao Second Brain. O que você quer fazer?",
+      "Oi! Estou aqui. Posso conversar sobre estratégia, criar objetivos, consultar o Second Brain e coordenar os agentes. Sobre o que quer falar?",
+      "Olá, Wesley. Estou por aqui. Quer conversar sobre algum projeto, estratégia ou ter uma ideia analisada?",
+      "Oi! Tudo certo por aqui. Tenho o escritório acompanhado — me diz o que você quer trabalhar.",
+      "E aí! Estou te ouvindo. O que vamos resolver hoje?",
     ];
     const idx = s.history.length % greetings.length;
     const response: string = greetings[idx] ?? greetings[0]!;
     s.history.push({ role:'manager', text:response });
+    s.topic = null; // saudação reinicia a conversa — não fica preso ao último projeto
     persistMessage(config, sessionKey, 'manager', response, s.mode, s.topic, s.lastBrainResult);
     return { type:'conversation', mode:s.mode, message:response, intent:'CHAT', actions:[], requiresConfirmation:false };
   }

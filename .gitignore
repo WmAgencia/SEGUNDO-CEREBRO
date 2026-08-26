@@ -1,7 +1,7 @@
 .vercel
 .env
-.env.local
-.env.*.local
+.env.*
+!.env.example
 *.key
 *.pem
 *.p12
@@ -13,6 +13,3 @@ core/second-brain.db-*
 secrets/
 *.log
 .DS_Store
-
-.vercel
-.env*
