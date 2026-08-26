@@ -7,7 +7,7 @@ import { setKillSwitch } from "../autonomous/cycle.ts";
 import { buildWorldState } from "../agents/world-state.ts";
 import { persistGoalKnowledge, persistInitiativeKnowledge } from "../obsidian/knowledge-records.ts";
 import { createNotification } from "./notifications.ts";
-import { completeWithGateway } from "../ai/model-router.ts";
+import { completeWithGateway, loadGroqKeys, GroqPoolProvider } from "../ai/model-router.ts";
 import { getAllAgentStates } from "./agent-state.ts";
 import { runInitiativeParallel } from "./orchestrator.ts";
 import { persistConversationNote } from "../obsidian/conversation-notes.ts";
@@ -272,6 +272,20 @@ async function callLLM(config: BrainConfig, s: ManagerSession, userMessage: stri
     { role: 'user' as const, content: userMessage },
   ];
   try {
+    // Groq vem PRIORITÁRIO (pool). Loga o erro real do Groq antes de ir pro gateway.
+    const groqProvider = new GroqPoolProvider({ keys: loadGroqKeys() });
+    if (await groqProvider.isAvailable()) {
+      try {
+        const r = await groqProvider.complete({ messages, maxTokens: 550, temperature: 0.3 });
+        console.log(`[manager] LLM responded via ${r.model} via groq-pool`);
+        return r.content;
+      } catch (gErr) {
+        console.error(`[manager] Groq falhou: ${gErr instanceof Error ? gErr.message : String(gErr)}`);
+      }
+    } else {
+      console.error("[manager] Groq indisponível (nenhuma chave no pool)");
+    }
+    // Fallback: gateway (OpenRouter ou outro provider).
     const result = await completeWithGateway(null, { messages, maxTokens: 550, temperature: 0.3 }, { workload: 'reasoning', agent: 'manager', task: userMessage });
     console.log(`[manager] LLM responded via ${result.provider}/${result.model} (${result.latencyMs}ms)`);
     return result.content;
