@@ -26,6 +26,11 @@ import { runInitiativeAutonomously } from "../../core/hq/autonomous-executor.ts"
 import { getInstance as getWhatsAppInstance, setAiEnabled as setInstanceAiEnabled, setConnected as setInstanceConnected } from "../../core/comms/instance-state.ts";
 import { detectOrphanedRuns } from "../../core/agents/runtime-ops.ts";
 
+// Self-healing do QR: rastreia o último QR emitido por instância. Se a Evolution
+// devolver o MESMO QR de novo (sessão travada em 'connecting' = QR antigo/inválido),
+// fecha e reconecta para forçar um QR NOVO. Evita o "QR antigo" que o usuário via.
+const lastQrByInstance = new Map<string, string>();
+
 const root = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.join(root, "public");
 const config = loadConfig();
@@ -169,8 +174,25 @@ const server = createServer((req, res) => {
         }
         const connectMatch = sub.match(/^\/connect\/(.+)$/);
         if (req.method === "GET" && connectMatch) {
-          const r = await wa(`/instance/connect/${connectMatch[1]}`);
-          return send(r.status, await r.json());
+          const name = decodeURIComponent(connectMatch[1]!);
+          const getQr = async () => {
+            const r = await wa(`/instance/connect/${name}`);
+            const j = (await r.json()) as Record<string, unknown>;
+            const code = String((j as { code?: string }).code ?? (j as { qrcode?: { code?: string } }).qrcode?.code ?? "");
+            return { r, j, code };
+          };
+          let { r, j, code } = await getQr();
+
+          // SELF-HEALING: QR idêntico ao anterior = sessão presa ('connecting').
+          // Fecha (logout) e reconecta para emitir um QR REALMENTE novo.
+          if (code && lastQrByInstance.get(name) === code) {
+            process.stdout.write(`[wa] QR preso p/ ${name} — regenerando (logout+connect)\n`);
+            await wa(`/instance/logout/${name}`, { method: "DELETE" }).catch(() => {});
+            await new Promise((resolve) => setTimeout(resolve, 1200));
+            ({ r, j, code } = await getQr());
+          }
+          if (code) lastQrByInstance.set(name, code);
+          return send(r.status, j);
         }
         const stateMatch = sub.match(/^\/state\/(.+)$/);
         if (req.method === "GET" && stateMatch) {

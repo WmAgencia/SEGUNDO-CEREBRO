@@ -379,8 +379,19 @@ async function waConnectLoad(){
     const inst=list.find(i=>String(i.assignedAgent||'')===agent)||list[0];
     if(instEl&&inst)instEl.textContent=`${inst.name} — Atendente: ${agent}`;
     let url=null;
+    // Rechama o endpoint connect a cada ciclo — a Evolution REGENERA um QR novo
+    // enquanto a instância não estiver conectada (evita QR antigo/vencido).
     if(inst){url=await fetchQr(inst.name)}
-    if(url){if(qr){qr.src=url;qr.style.display='inline'}if(hint)hint.textContent='✔ QR gerado — escaneie com o WhatsApp deste atendente.'}
+    if(url){
+      if(qr){
+        // cache-busting + spinner antes de trocar, garantindo imagem "nova"
+        qr.classList.add('wa-loading');
+        qr.src=url+`#${Date.now()}`;
+        qr.style.display='inline';
+        setTimeout(()=>qr.classList.remove('wa-loading'),350);
+      }
+      if(hint)hint.textContent='✔ QR gerado — escaneie com o WhatsApp deste atendente. Novo QR a cada 10s.'
+    }
     else{if(qr){qr.style.display='none'}if(hint)hint.textContent=inst?`Sem QR disponível (${inst.state}) — se já conectou, atualize.`:'Nenhuma instância ainda. Crie uma em Conexões WhatsApp.'}
   }catch(e){if(hint)hint.textContent='Evolution API indisponível — '+esc(e.message)}
 }
@@ -389,7 +400,8 @@ function openWaConnect(agent){
   $('wa-connect-overlay').classList.add('open');
   if(waConnectPoll)clearInterval(waConnectPoll);
   waConnectLoad();
-  waConnectPoll=setInterval(waConnectLoad,4000);
+  // REGRA: o QR é regenerado a cada 10 segundos (QR novo enquanto desconectado)
+  waConnectPoll=setInterval(waConnectLoad,10000);
 }
 function closeWaConnect(){
   $('wa-connect-overlay').classList.remove('open');

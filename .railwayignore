@@ -1,0 +1,15 @@
+node_modules/
+data/
+tools/
+skills-sources/
+secrets/
+tests/
+scripts/
+docs/
+.vercel/
+core/second-brain.db
+core/second-brain.db-*
+*.log
+.git/
+apps/nutriva/
+apps/cli/
