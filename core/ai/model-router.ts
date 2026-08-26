@@ -71,10 +71,10 @@ export class GroqProvider implements LLMProvider {
   }
 }
 
-/** Carrega as chaves Groq de GROQ_API_KEY_1..N (fallback: GROQ_API_KEY única). */
+/** Carrega as chaves Groq de GROQ_API_KEY_1..N (até 10; fallback: GROQ_API_KEY única). Usa apenas as preenchidas. */
 export function loadGroqKeys(): string[] {
   const keys: string[] = [];
-  for (let i = 1; i <= 8; i++) {
+  for (let i = 1; i <= 10; i++) {
     const k = process.env[`GROQ_API_KEY_${i}`];
     if (k && k.trim()) keys.push(k.trim());
   }
