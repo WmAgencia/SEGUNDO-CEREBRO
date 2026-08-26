@@ -35,6 +35,9 @@ const root = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.join(root, "public");
 const config = loadConfig();
 const port = Number(process.env.PORT ?? process.env.HQ_PORT ?? "3200");
+// Diagnóstico: número de chaves Groq no pool (0 = sem chave → fallback OpenRouter)
+import { loadGroqKeys } from "../../core/ai/model-router.ts";
+console.log(`[env] GROQ keys no pool: ${loadGroqKeys().length}`);
 const host = process.env.HQ_HOST ?? "127.0.0.1";
 const allowedOrigins = (process.env.HQ_CORS_ORIGINS ?? "*").split(",").map((s) => s.trim());
 
