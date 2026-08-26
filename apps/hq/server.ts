@@ -23,7 +23,7 @@ import { transcribeAudio } from "../../core/audio/transcription.ts";
 import { executeEngineeringTask } from "../../core/hq/engineering.ts";
 import { listNotifications, unreadCount, markRead, markAllRead, createNotification } from "../../core/hq/notifications.ts";
 import { runInitiativeAutonomously } from "../../core/hq/autonomous-executor.ts";
-import { getInstance as getWhatsAppInstance, setAiEnabled as setInstanceAiEnabled, setConnected as setInstanceConnected } from "../../core/comms/instance-state.ts";
+import { getInstance as getWhatsAppInstance, setAiEnabled as setInstanceAiEnabled, setConnected as setInstanceConnected, planInstanceForAgent, assignAgentToInstance } from "../../core/comms/instance-state.ts";
 import { detectOrphanedRuns } from "../../core/agents/runtime-ops.ts";
 
 // Self-healing do QR: rastreia o último QR emitido por instância. Se a Evolution
@@ -198,6 +198,46 @@ const server = createServer((req, res) => {
         if (req.method === "GET" && stateMatch) {
           const r = await wa(`/instance/connectionState/${stateMatch[1]}`);
           return send(r.status, await r.json());
+        }
+        // ── CONEXÃO POR AGENTE: garante uma instância dedicada ao atendente e retorna QR ──
+        const connectAgentMatch = sub.match(/^\/connect\/agent\/(.+)$/);
+        if (req.method === "GET" && connectAgentMatch) {
+          const agentId = decodeURIComponent(connectAgentMatch[1]!);
+          const existing = (await (await wa("/instance/fetchInstances")).json()) as Array<{ name?: string; instanceName?: string }>;
+          const names = new Set<string>();
+          for (const i of existing) { const n = i.name ?? i.instanceName; if (typeof n === "string") names.add(n); }
+          const db = new DatabaseSync(config.dbPath);
+          let name: string;
+          try {
+            name = planInstanceForAgent(db, agentId, [...names]);
+          } finally { db.close(); }
+          // garante a instância na Evolution
+          if (!names.has(name)) {
+            await wa("/instance/create", { method: "POST", body: JSON.stringify({ instanceName: name }) }).catch(() => {});
+          }
+          const getQr = async () => {
+            const r = await wa(`/instance/connect/${name}`);
+            const j = (await r.json()) as Record<string, unknown>;
+            const code = String((j as { code?: string }).code ?? (j as { qrcode?: { code?: string } }).qrcode?.code ?? "");
+            return { r, j, code };
+          };
+          let { r, j, code } = await getQr();
+          if (code && lastQrByInstance.get(name) === code) {
+            await wa(`/instance/logout/${name}`, { method: "DELETE" }).catch(() => {});
+            await new Promise((resolve) => setTimeout(resolve, 1200));
+            ({ r, j, code } = await getQr());
+          }
+          if (code) lastQrByInstance.set(name, code);
+          return send(r.status, { ...j, assignedAgent: agentId, waName: name });
+        }
+        // ── DESCONECTAR (logout) ──
+        const disconnectMatch = sub.match(/^\/disconnect\/(.+)$/);
+        if (req.method === "POST" && disconnectMatch) {
+          const name = decodeURIComponent(disconnectMatch[1]!);
+          const r = await wa(`/instance/logout/${name}`, { method: "DELETE" });
+          const db = new DatabaseSync(config.dbPath);
+          try { setInstanceConnected(db, name, false); } finally { db.close(); }
+          return send(r.ok ? 200 : r.status, { ok: r.ok, name });
         }
         send(404, { error: "rota whatsapp desconhecida" });
       } catch (error) { send(500, { error: error instanceof Error ? error.message : String(error) }); }

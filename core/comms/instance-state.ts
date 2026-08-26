@@ -68,6 +68,40 @@ export function setConnected(db: DatabaseSync, name: string, connected: boolean,
   return getInstance(db, name);
 }
 
+/** Vincula uma instância a um agente (um WhatsApp por atendente). */
+export function assignAgentToInstance(db: DatabaseSync, name: string, agentId: string): WhatsAppInstanceRecord {
+  const previous = db.prepare("SELECT assigned_agent FROM whatsapp_instances WHERE name=?").get(name) as { assigned_agent: string | null } | undefined;
+  db.prepare(
+    `INSERT INTO whatsapp_instances (name, assigned_agent) VALUES (?, ?)
+     ON CONFLICT(name) DO UPDATE SET assigned_agent=?, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`,
+  ).run(name, agentId, agentId);
+  // garante que nenhum outro agente use a MESMA instância (um WhatsApp = um atendente)
+  db.prepare("UPDATE whatsapp_instances SET assigned_agent=NULL WHERE assigned_agent=? AND name<>?").run(agentId, name);
+  db.prepare(
+    "INSERT INTO events (event_type, subject, payload) VALUES ('whatsapp_instance_assigned', ?, ?)",
+  ).run(name, JSON.stringify({ agentId, previous: previous?.assigned_agent ?? null }));
+  return getInstance(db, name);
+}
+
+/** Instância vinculada a um agente (null se ainda não tem). */
+export function instanceForAgent(db: DatabaseSync, agentId: string): WhatsAppInstanceRecord | null {
+  const row = db.prepare("SELECT * FROM whatsapp_instances WHERE assigned_agent=? ORDER BY name LIMIT 1").get(agentId) as unknown as RawInstance | undefined;
+  return row ? toInstance(row) : null;
+}
+
+/** Camada Evolution: qual nome usar para um atendente — reusa a instância dele ou cria uma nova dedicada. */
+export function planInstanceForAgent(db: DatabaseSync, agentId: string, existingNames: string[]): string {
+  const inst = instanceForAgent(db, agentId);
+  if (inst) return inst.name;
+  // cria a próxima instância livre (ex.: whatsapp-01, whatsapp-02...)
+  let n = 1;
+  while (existingNames.includes(`whatsapp-${n}`)) n++;
+  const name = `whatsapp-${n}`;
+  assignAgentToInstance(db, name, agentId);
+  return name;
+}
+
+
 export interface InboundPolicyResult {
   action: "PROCESS" | "SKIP_AI_DISABLED" | "SKIP_NOT_CONNECTED";
   reason: string;

@@ -137,7 +137,7 @@ async function openProfile(aid){
       </div>`;
     const waSec=isSales(aid)?`
       <div class="p-sec"><h4>WhatsApp</h4>
-        <button class="btn primary block" id="profile-wa-connect">📱 Conectar WhatsApp</button>
+        <button class="btn primary block" id="profile-wa-connect">📱 Pesquisando conexão…</button>
         <div id="profile-wa-state" class="muted-sm" style="margin-top:6px"></div>
       </div>`:'';
     $('profile-content').innerHTML=`
@@ -148,7 +148,7 @@ async function openProfile(aid){
       <div class="p-sec"><h4>Handoffs</h4>${(p.handoffs??[]).map(h=>`<div class="p-item">${esc(h.from_agent)} → ${esc(h.to_agent)}<small>${esc(h.summary.slice(0,50))}</small></div>`).join('')||'<p class="muted">Nenhum.</p>'}</div>
       <div class="p-sec"><h4>Runs</h4>${(p.runs??[]).map(r=>`<div class="p-item">${esc(r.id.slice(0,22))}<small>${esc(r.state)}</small></div>`).join('')||'<p class="muted">Nenhum.</p>'}</div>`;
     if(isSales(aid)){
-      $('profile-wa-connect').addEventListener('click',()=>openWaConnect(aid));
+      $('profile-wa-connect').addEventListener('click',()=>profileWaToggle(aid));
       refreshProfileWaState(aid);
     }
     // Log ao vivo + rename
@@ -355,44 +355,72 @@ document.addEventListener('click',(e)=>{const t=e.target.closest('[data-wa-compu
 /* ── Conexão WhatsApp unitária (Atendente) ── */
 let waConnectAgent=null,waConnectPoll=null;
 async function profileAgentInstances(aid){
-  // instância da Evolution associada a este atendente (assigned_agent) ou a 1ª disponível
+  // instância da Evolution associada a este atendente (assigned_agent)
   try{
     const r=await(await fetch(`${API}/api/whatsapp/instances`)).json();
     const list=r.instances??[];
-    return list.find(i=>String(i.assignedAgent||'')===aid)||list[0]||{name:null,state:'unknown'};
-  }catch{return {name:null,state:'unknown'}}
+    return list.find(i=>String(i.assignedAgent||'')===aid)||null;
+  }catch{return null}
+}
+/** Estado atual do WhatsApp do atendente: {name, connected, state} | null. */
+async function profileAgentWa(aid){
+  const inst=await profileAgentInstances(aid);
+  if(!inst)return null;
+  const open=String(inst.state).toLowerCase().includes('open');
+  return {name:inst.name, connected:open, state:inst.state};
 }
 async function refreshProfileWaState(aid){
-  const el=$('profile-wa-state');if(!el)return;
-  const inst=await profileAgentInstances(aid);
-  if(!inst.name){el.textContent='Nenhuma conexão criada — clique em Conectar.';return}
-  const open=String(inst.state).toLowerCase().includes('open');
-  el.textContent=open?`✅ Conectado (${inst.name})`:`Status: ${esc(inst.state)}`;
+  const el=$('profile-wa-state'),btn=$('profile-wa-connect');if(!el)return;
+  const info=await profileAgentWa(aid);
+  if(!info){
+    el.textContent='Ainda sem WhatsApp — clique em Conectar para gerar o QR.';
+    if(btn)btn.textContent='📱 Conectar WhatsApp';
+    return;
+  }
+  if(info.connected){
+    el.textContent=`✅ Conectado (${info.name})`;
+    if(btn){btn.textContent=`📵 Desconectar (${info.name})`;btn.className='btn danger block';}
+  }else{
+    el.textContent=`Status: ${esc(info.state)} (${info.name})`;
+    if(btn){btn.textContent='📱 Conectar WhatsApp';btn.className='btn primary block';}
+  }
+}
+/** Alterna Conectar / Desconectar. Cada atendente = uma instância dedicada. */
+async function profileWaToggle(aid){
+  const info=await profileAgentWa(aid);
+  if(info && info.connected){
+    // Desconectar
+    try{
+      const r=await fetch(`${API}/api/whatsapp/disconnect/${encodeURIComponent(info.name)}`,{method:'POST'});
+      if(r.ok){toast('📵 WhatsApp desconectado');await refreshProfileWaState(aid);refresh();}
+      else toast('❌ Falha ao desconectar');
+    }catch{toast('Erro ao desconectar');}
+    return;
+  }
+  // Conectar → abre popup de QR para essa instância do agente
+  openWaConnect(aid);
 }
 async function waConnectLoad(){
   const agent=waConnectAgent;if(!agent)return;
   const instEl=$('wa-connect-instance'),qr=$('wa-connect-qr'),hint=$('wa-connect-hint');
   if(instEl)instEl.textContent=`Atendente: ${agent}`;
   try{
-    const r=await(await fetch(`${API}/api/whatsapp/instances`)).json();
-    const list=r.instances??[];
-    const inst=list.find(i=>String(i.assignedAgent||'')===agent)||list[0];
-    if(instEl&&inst)instEl.textContent=`${inst.name} — Atendente: ${agent}`;
-    let url=null;
-    // Rechama o endpoint connect a cada ciclo — a Evolution REGENERA um QR novo
-    // enquanto a instância não estiver conectada (evita QR antigo/vencido).
-    if(inst){url=await fetchQr(inst.name)}
+    // GET /api/whatsapp/connect/agent/:aid — garante uma instância DEDICADA ao
+    // agente (cria/associa) e retorna o QR + nome. QR novo a cada ciclo quando
+    // ainda não conectado (self-healing no backend p/ sessão presa).
+    const j=await(await fetch(`${API}/api/whatsapp/connect/agent/${encodeURIComponent(agent)}`)).json();
+    const waName=j.waName||j.assignedAgent||agent;
+    if(instEl)instEl.textContent=`${waName} — Atendente: ${agent}`;
+    const url=findDataUrl(j);
     if(url){
-      if(qr){
-        // cache-busting + spinner antes de trocar, garantindo imagem "nova"
-        qr.classList.add('wa-loading');
-        qr.src=url+`#${Date.now()}`;
-        qr.style.display='inline';
-        setTimeout(()=>qr.classList.remove('wa-loading'),350);
-      }
-      if(hint)hint.textContent='✔ QR gerado — escaneie com o WhatsApp deste atendente. Novo QR a cada 10s.'
+      if(qr){qr.classList.add('wa-loading');qr.src=url+`#${Date.now()}`;qr.style.display='inline';setTimeout(()=>qr.classList.remove('wa-loading'),350);}
+      if(hint)hint.textContent='✔ QR gerado — escaneie com o WhatsApp deste atendente. Novo QR a cada 10s.';
+    }else{
+      if(qr)qr.style.display='none';
+      if(hint)hint.textContent='Sem QR — a instância pode já estar conectada.';
+      // conectado: fecha o popup e atualiza o perfil (botão vira Desconectar)
+      setTimeout(()=>{closeWaConnect();refreshProfileWaState(agent);if(liveLogAgent===agent)openProfile(agent);refresh();},800);
     }
-    else{if(qr){qr.style.display='none'}if(hint)hint.textContent=inst?`Sem QR disponível (${inst.state}) — se já conectou, atualize.`:'Nenhuma instância ainda. Crie uma em Conexões WhatsApp.'}
   }catch(e){if(hint)hint.textContent='Evolution API indisponível — '+esc(e.message)}
 }
 function openWaConnect(agent){
