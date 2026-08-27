@@ -7,7 +7,7 @@ import { setKillSwitch } from "../autonomous/cycle.ts";
 import { buildWorldState } from "../agents/world-state.ts";
 import { persistGoalKnowledge, persistInitiativeKnowledge } from "../obsidian/knowledge-records.ts";
 import { createNotification } from "./notifications.ts";
-import { completeWithGateway, loadGroqKeys, GroqPoolProvider } from "../ai/model-router.ts";
+import { completeWithGateway, loadGroqKeys } from "../ai/model-router.ts";
 import { getAllAgentStates } from "./agent-state.ts";
 import { runInitiativeParallel } from "./orchestrator.ts";
 import { persistConversationNote } from "../obsidian/conversation-notes.ts";
@@ -196,10 +196,10 @@ export function buildSystemContext(config: BrainConfig, s: ManagerSession): stri
     }
 
     return parts.join('\n\n');
-  } finally { db.close(); }
+  }   finally { db.close(); }
 }
 
-/* ── LLM CALL ── */
+/* ── SYSTEM PROMPT (mantido separado para referência) ──────────── */
 
 const SYSTEM_PROMPT = `Você é o Gerente do Second Brain OS, um sistema operacional empresarial multiagente.
 
@@ -233,11 +233,6 @@ IMPORTANTE — AÇÃO OPERACIONAL:
 Quando você propor um plano, objetivo, ou sugerir criar tarefas/goals/initiatives,
 SEMPRE termine sua resposta com o marcador exato [PROPOSTA] na última linha.
 Isso sinaliza ao sistema que você está aguardando confirmação para executar.
-Exemplo:
-"...Posso criar esse objetivo e distribuir as tarefas?
-[PROPOSTA]"
-
-Quando o usuário já confirmou e você está descrevendo o que foi executado, use [EXECUTADO].
 
 Regras:
 - Seja direto e natural, como um gerente de verdade.
@@ -245,52 +240,39 @@ Regras:
 - Se o usuário disser "aprofunde", expanda a resposta anterior com mais detalhes do contexto.
 - Se o usuário disser "e o que falta?", liste o que ainda não foi feito.
 - Se o usuário disser "transforma isso em plano", proponha um plano estruturado.
-- Se o usuário confirmar ("pode", "sim", "executa"), confirme que vai executar.
-- NUNCA responda com templates genéricos como "quer que eu analise mais a fundo?" quando você já tem dados para responder.`;
+- Se o usuário confirmar ("pode", "sim", "executa"), confirme que vai executar.`;
+
+/* ── LLM CALL (unified via gateway — never bypass) ── */
 
 async function callLLM(config: BrainConfig, s: ManagerSession, userMessage: string): Promise<string | null> {
-  // Budget guard (spec §33): estourou limite diário → não chama LLM, sinaliza.
+  // Budget guard (spec §33)
   try {
     const bdb = new DatabaseSync(config.dbPath);
     try {
       const budget = checkDailyBudget(bdb);
-      if (!budget.ok) {
-        lastLlmBlockReason = `budget diário excedido (US$${budget.spentToday.toFixed(2)} ≥ US$${budget.limitPerDay.toFixed(2)})`;
-        console.error(`[manager] LLM bloqueado: ${lastLlmBlockReason}`);
-        return null;
-      }
+      if (!budget.ok) { lastLlmBlockReason = `budget diário excedido (US$${budget.spentToday.toFixed(2)} ≥ US$${budget.limitPerDay.toFixed(2)})`; return null; }
     } finally { bdb.close(); }
   } catch { /* db indisponível: segue sem guard */ }
   lastLlmBlockReason = null;
+
   let context = buildSystemContext(config, s);
-  // Free-tier models cap prompt tokens (~11k). Clamp the context so the call never 402s.
+  // Free-tier models cap prompt tokens (~11k). Clamp para não 402.
   const MAX_CONTEXT_CHARS = 9000;
   if (context.length > MAX_CONTEXT_CHARS) context = context.slice(0, MAX_CONTEXT_CHARS) + "\n…(contexto truncado)";
+
   const messages = [
     { role: 'system' as const, content: `${SYSTEM_PROMPT}\n\n--- CONTEXTO ATUAL DO SISTEMA ---\n${context}\n--- FIM DO CONTEXTO ---` },
     ...s.history.slice(-6).map(h => ({ role: h.role === 'user' ? 'user' as const : 'assistant' as const, content: h.text.slice(0, 400) })),
     { role: 'user' as const, content: userMessage },
   ];
+
+  // Usa o GATEWAY centralizado — nunca cria provider diretamente
   try {
-    // Groq vem PRIORITÁRIO (pool). Loga o erro real do Groq antes de ir pro gateway.
-    const groqProvider = new GroqPoolProvider({ keys: loadGroqKeys() });
-    if (await groqProvider.isAvailable()) {
-      try {
-        const r = await groqProvider.complete({ messages, maxTokens: 550, temperature: 0.3 });
-        console.log(`[manager] LLM responded via ${r.model} via groq-pool`);
-        return r.content;
-      } catch (gErr) {
-        console.error(`[manager] Groq falhou: ${gErr instanceof Error ? gErr.message : String(gErr)}`);
-      }
-    } else {
-      console.error("[manager] Groq indisponível (nenhuma chave no pool)");
-    }
-    // Fallback: gateway (OpenRouter ou outro provider).
-    const result = await completeWithGateway(null, { messages, maxTokens: 550, temperature: 0.3 }, { workload: 'reasoning', agent: 'manager', task: userMessage });
+    const result = await completeWithGateway(new DatabaseSync(config.dbPath), { messages, maxTokens: 550, temperature: 0.3 }, { workload: 'reasoning', agent: 'manager', task: userMessage });
     console.log(`[manager] LLM responded via ${result.provider}/${result.model} (${result.latencyMs}ms)`);
     return result.content;
   } catch (error) {
-    console.error(`[manager] LLM call failed: ${error instanceof Error ? error.message : String(error)}`);
+    console.error(`[manager] Gateway falhou: ${error instanceof Error ? error.message.slice(0, 200) : String(error)}`);
     return null;
   }
 }

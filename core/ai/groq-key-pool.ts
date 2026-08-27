@@ -75,16 +75,34 @@ export class GroqKeyPool {
     }));
   }
 
-  /** Escolhe a próxima chave disponível (evita COOLDOWN/FAILED/DISABLED). */
+  /** Retorna counts rápidos de saúde do pool — NUNCA revela chaves. */
+  getHealthyCount(): number {
+    const now = Date.now();
+    return this.slots.filter(s => {
+      if (s.state === "COOLDOWN" && s.cooldownUntil !== null && now < s.cooldownUntil) return false;
+      return s.state === "AVAILABLE";
+    }).length;
+  }
+
+  /** Escolhe próxima chave saudável COM round-robin (distribui carga entre chaves). */
   private nextSlot(): { index: number; slot: GroqKeySlot } | null {
     const now = Date.now();
-    for (let i = 0; i < this.slots.length; i++) {
+    // Mantém índice circular para distribuir requisições igualmente
+    const start = this._roundRobinIndex ?? 0;
+    for (let j = 0; j < this.slots.length; j++) {
+      const i = (start + j) % this.slots.length;
       const s = this.slots[i]!;
-      if (s.state === "COOLDOWN" && s.cooldownUntil !== null && now >= s.cooldownUntil) { s.state = "AVAILABLE"; s.cooldownUntil = null; }
-      if (s.state === "AVAILABLE") return { index: i, slot: s };
+      if (s.state === "COOLDOWN" && s.cooldownUntil !== null && now >= s.cooldownUntil) {
+        s.state = "AVAILABLE"; s.cooldownUntil = null;
+      }
+      if (s.state === "AVAILABLE") {
+        this._roundRobinIndex = (i + 1) % this.slots.length;
+        return { index: i, slot: s };
+      }
     }
     return null;
   }
+  private _roundRobinIndex = 0;
 
   /** Rotação com cooldown/backoff/retry. Retorna chave + qual slot usou. */
   async complete(request: CompletionRequest): Promise<{ result: CompletionResult; slotUsed: number; provider: string }> {
@@ -173,4 +191,21 @@ function latencyBookkeep(slot: GroqKeySlot, started: number): void {
 /** Limpa as chaves antes de qualquer log/serialização (nunca vazar). */
 export function redactKeys(keys: string[]): string[] {
   return keys.map((_, i) => `groq#${i + 1}`);
+}
+
+/** Classifica erro externo numa categoria operacional (sem sensitive data). */
+export function classifyError(status: number | null, err: unknown): string {
+  if (status === 429) return "RATE_LIMIT_429";
+  if (status === 401) return "AUTH_FAIL_401";
+  if (status === 403) return "AUTH_FAIL_403";
+  if (status && status >= 400 && status < 500) return "CLIENT_ERROR_4XX";
+  if (status === 500) return "SERVER_ERROR_500";
+  if (status === 502) return "SERVER_ERROR_502";
+  if (status === 503) return "SERVER_ERROR_503";
+  if (status === 504) return "SERVER_ERROR_504";
+  const msg = err instanceof Error ? err.message : String(err);
+  if (/(\btimeout\b|timed\s*out)/i.test(msg)) return "TIMEOUT";
+  if (/network|fetch|connection|abort/i.test(msg)) return "NETWORK_ERROR";
+  if (/model unavailable|not found|unsupported/i.test(msg)) return "MODEL_UNAVAILABLE";
+  return "UNKNOWN";
 }
