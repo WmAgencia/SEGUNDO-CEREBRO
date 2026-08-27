@@ -144,6 +144,8 @@ export function addNodes(config: BrainConfig, runId: string, plan: GraphPlan): G
           nodeType: n.type,
           toolId: n.toolId ?? null,
           require: n.requireOutputPattern ?? null,
+          requireCount: n.requireCount ?? null,
+          requireField: n.requireField ?? null,
         }),
         nowIso(),
       );
@@ -272,6 +274,39 @@ export function recordNodeEvent(config: BrainConfig, runId: string, nodeId: stri
     db.prepare("INSERT INTO events (event_type, subject, payload) VALUES ('graph_node', ?, ?)").run(
       nodeId,
       JSON.stringify({ run_id: runId, event, ...payload }),
+    );
+  } finally {
+    db.close();
+  }
+}
+
+/**
+ * Run-level telemetry with the standard FASE 3.6 event names
+ * (GRAPH_CREATED, GRAPH_STARTED, GRAPH_COMPLETED, GRAPH_FAILED, GRAPH_BLOCKED,
+ * GRAPH_RECOVERED, NODE_READY, NODE_STARTED, NODE_COMPLETED, NODE_FAILED,
+ * NODE_REWORK, NODE_RETRY, GRAPH_EVALUATED). Each row carries timestamp
+ * (occurred_at), graph_id, node_id, session_id, agent_id and provenance.
+ */
+export function recordRunEvent(
+  config: BrainConfig,
+  runId: string,
+  event: string,
+  payload: { nodeId?: string; sessionId?: string | null; agentId?: string | null; extra?: Record<string, unknown> } = {},
+): void {
+  const db = openDatabase(config.dbPath);
+  try {
+    const run = db.prepare("SELECT session_key, status FROM graph_runs WHERE id = ?").get(runId) as { session_key?: string } | undefined;
+    db.prepare("INSERT INTO events (event_type, subject, payload) VALUES ('graph_run', ?, ?)").run(
+      runId,
+      JSON.stringify({
+        event,
+        graph_id: runId,
+        node_id: payload.nodeId ?? null,
+        session_id: payload.sessionId ?? run?.session_key ?? null,
+        agent_id: payload.agentId ?? null,
+        provenance: "local:orchestration",
+        ...(payload.extra ?? {}),
+      }),
     );
   } finally {
     db.close();

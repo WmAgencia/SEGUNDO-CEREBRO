@@ -206,6 +206,20 @@ na conta WmAgencia ou adicionar colaborador, depois `git push origin main`.
   Observabilidade: transições registradas em `events` (event_type=graph_node);
   `graph_status` responde "o que está sendo feito e por quê".
   Docs: `docs/GRAPH_ORCHESTRATION.md`. 448 testes; typecheck limpo.
+- FASE 3.6 concluída: Graph Orchestration REAL E2E (integração, sem nova arquitetura).
+  Planner reconhece GRAPH de lead-gen ("encontre N empresas... sem site") e TOOL
+  goal_create; evaluator exige quantidade real (`requireCount`/`requireField`, evid.
+  `count: encontrado/esperado`); telemetria padronizada `graph_run` (GRAPH_CREATED,
+  GRAPH_STARTED/COMPLETED/FAILED/BLOCKED/RECOVERED, NODE_READY/STARTED/COMPLETED/
+  FAILED/REWORK/RETRY, GRAPH_EVALUATED) com graph_id/node_id/session_id/agent_id/
+  provenance; recovery com `prepareResume` retoma sem duplicação (CONFS: COMPLETED
+  nunca re-executa); `persistGraphOutcome` grava resultado útil no vault
+  (`08 - Context/Graphs/`, deduplicado por graph_id) e `persistGoalNote` em
+  `10 - GOALS/` (goal_create também atualiza Obsidian); nós recebem `brainContext`
+  real; `graph_execute` persiste outcome, suporta `resume` e propaga
+  requestApproval; painel discreto "Graphs" no app (`GET /api/graphs`).
+  Docs: `docs/GRAPH_E2E_REPORT.md`. 16 testes E2E novos (TESTE 1–10 + web real +
+  evaluator + gate) → 464 testes; typecheck limpo. Push bloqueado por credencial.
 - Stack: Node 24 + node:sqlite + FTS5 + TypeScript + commander + yaml +
   @modelcontextprotocol/sdk + zod + vitest + llama.cpp/Qwen3 local.
 - Vault real inicializado e indexado:
@@ -214,7 +228,8 @@ na conta WmAgencia ou adicionar colaborador, depois `git push origin main`.
 
 ## Próxima fase
 
-Graph Orchestration (FASE 3.5) encerrada. Próximas (quando houver necessidade
-real): execução autônoma aprovada do Single Agent sobre o vault com evidência,
-agregação de subagentes via CLI `opencode run`, health do gráfico em produção.
-Manter disco monitorado (<1 GB livre hoje).
+Graph Orchestration (FASE 3.6) encerrada: execução real comprovada por E2E.
+Próximas (quando houver necessidade real): habilitar chave de provider
+(Groq/OpenRouter) para rodar subagentes OpenCode reais no graph; resolver
+credencial push (`git credential-manager github login`); health/observabilidade
+do gráfico em produção. Manter disco monitorado (<1 GB livre hoje).

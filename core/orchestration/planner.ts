@@ -31,11 +31,21 @@ const TOOL_INTENTS: Array<{ re: RegExp; tool: string }> = [
   { re: /(agenda|compromisso|reuni[ãa]o).*(hoje|amanh[ãa]|ver|mostra|list)/i, tool: "agenda_list" },
   { re: /(memorias|memórias|lembra)/i, tool: "memory_search" },
   { re: /(objetivos|goals|metas) ativos/i, tool: "goal_list" },
+  { re: /(cri(ar|e) (um |uma )?(novo |nova )?(objetivo|meta|goal)|registrar (objetivo|meta|goal)|definir (objetivo|meta))/i, tool: "goal_create" },
 ];
 
-// multi-step work patterns → GRAPH
-function graphKind(request: string): "rebuild" | "system_build" | "prospection" | "video" | null {
+// "encontre N empresas ... sem site" → multi-step lead generation GRAPH
+function isLeadGen(request: string): boolean {
   const t = request;
+  const findBiz = /(encontr|encontre|achar|ache|descobrir|levantar|buscar|busque|procurar|procur(e|ar))/i.test(t) && /(empresas?|neg[óo]cios?|cl[íi]nic[ao]s?|leads?|clientes?)/i.test(t);
+  const withoutSite = /(sem site|sem website|sem presen[çc]a (online|digital)|n[ãa]o possu[ei]m? site|n[ãa]o t[eê]m site|site n[ãa]o|sem internet)/i.test(t);
+  return findBiz && withoutSite;
+}
+
+// multi-step work patterns → GRAPH
+function graphKind(request: string): "rebuild" | "system_build" | "prospection" | "video" | "lead_gen" | null {
+  const t = request;
+  if (isLeadGen(t)) return "lead_gen";
   if (/(prospec[çc][ãa]o|prospec|capta[çc][ãa]o de clientes|funil de vendas)/i.test(t)) return "prospection";
   if (/(gerar video|gera[çc][ãa]o de video|video automatizado|sistema de videos?)/i.test(t)) return "video";
   if (/(funciona(ndo|l))|deixar .*100|colocar .* pra funcionar|implantar|implementar|reparar|arrumar|corrigir|reconstruir|refatorar|auditar|revis[ãa]o geral|colocar .* no ar|colocar .* funcionando/i.test(t)) {
@@ -57,6 +67,12 @@ export function classifyIntent(request: string): RequestIntent {
 
 function baseNodes(kind: NonNullable<ReturnType<typeof graphKind>>): GraphPlan["nodes"] {
   switch (kind) {
+    case "lead_gen":
+      return [
+        { id: "research", title: "Pesquisar leads (web)", type: "research", assignedAgent: "researcher", input: { task: "Buscar empresas do nicho em Sorocaba com foco nos que parecem sem site. Retornar lista com nome, cidade, possível site. Evidência: lista com quantidade." } },
+        { id: "verify", title: "Verificar presença de site", type: "verify", assignedAgent: "researcher", dependencies: ["research"], input: { task: "Para cada candidato da pesquisa, verificar se possui site próprio (via busca/existência). Retornar apenas os sem site, com quantidade e origem (timestamp)." } },
+        { id: "strategy", title: "Estratégia de abordagem", type: "design", assignedAgent: "researcher", dependencies: ["verify"], input: { task: "Montar estratégia de abordagem (WhatsApp) para os leads sem site: mensagem, gancho, próximo passo. Retornar plano objetivo." } },
+      ];
     case "prospection":
       return [
         { id: "research", title: "Research", type: "research", description: "Investigar o mercado, canais e dados existentes de prospecção." },

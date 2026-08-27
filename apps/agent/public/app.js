@@ -21,7 +21,7 @@
 
   // ── Views ──
   function showView(name) {
-    ["chat", "images", "agenda", "connections", "routing"].forEach((v) => $("#view-" + v).classList.toggle("hidden", v !== name));
+    ["chat", "images", "agenda", "connections", "routing", "graphs"].forEach((v) => $("#view-" + v).classList.toggle("hidden", v !== name));
   }
   document.querySelectorAll(".sb-item").forEach((item) => {
     item.addEventListener("click", () => {
@@ -32,6 +32,7 @@
       if (view === "agenda") loadAgenda();
       if (view === "connections") loadConnections();
       if (view === "routing") loadRouting();
+      if (view === "graphs") loadGraphs();
     });
   });
 
@@ -208,7 +209,7 @@
     } catch { /* backend off */ }
   }
 
-  async function loadAgenda() {
+async function loadAgenda() {
     try {
       const { events } = await api("/api/agenda");
       const list = $("#agenda-list");
@@ -217,10 +218,27 @@
       events.forEach((e) => {
         const div = document.createElement("div");
         div.className = "list-item";
-        div.innerHTML = "<h3>" + esc(e.title) + "</h3><p>" + new Date(e.startsAt).toLocaleString("pt-BR") + (e.description ? " — " + esc(e.description) : "") + "</p>";
+        div.innerHTML = "<h3>" + esc(e.title) + "</h3><p>" + new Date(e.startsAt).toLocaleString("pt-BR") + (e.description ? " ?" " + esc(e.description) : "") + "</p>";
         list.appendChild(div);
       });
     } catch { /* backend off */ }
+  }
+
+  // "?"? Graphs (painel discreto: execuǜo atual, nodes, status) "?"?"
+  async function loadGraphs() {
+    try {
+      const { runs } = await api("/api/graphs?limit=20");
+      const list = $("#graphs-list");
+      if (!runs.length) { list.innerHTML = '<p class="muted">Nenhum Graph nesta sessão.</p>'; return; }
+      list.innerHTML = "";
+      runs.forEach((r) => {
+        const div = document.createElement("div");
+        div.className = "list-item";
+        const nodes = (r.nodes || []).map((n) => "`" + esc(n.title) + " [" + esc(n.status) + "]" + (n.error ? " — " + esc(n.error.slice(0, 80)) : "") + "`").join("<br/>");
+        div.innerHTML = "<h3>" + esc(r.goal.slice(0, 70)) + "</h3><p>Status: <strong>" + esc(r.status) + "</strong> — " + esc(r.id) + "</p>" + (nodes ? "<p class='muted'>" + nodes + "</p>" : "");
+        list.appendChild(div);
+      });
+    } catch { list.innerHTML = '<p class="muted">Graphs indisponíveis.</p>'; }
   }
 
   async function loadConnections() {

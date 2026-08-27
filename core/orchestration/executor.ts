@@ -20,6 +20,7 @@ import {
   updateNode,
   updateRunStatus,
   recordNodeEvent,
+  recordRunEvent,
   touchRun,
 } from "./graph-store.ts";
 import { schedule, assignParallelGroups } from "./scheduler.ts";
@@ -82,6 +83,15 @@ export class GraphExecutor {
     }
 
     updateRunStatus(config, runId, "RUNNING");
+    recordRunEvent(config, runId, "GRAPH_STARTED", {
+      sessionId: run.sessionKey,
+      extra: { planner: run.planner, request: run.request.slice(0, 200) },
+    });
+    for (const node of listNodes(config, runId)) {
+      if (node.status === "PENDING" || node.status === "READY") {
+        recordRunEvent(config, runId, "NODE_READY", { nodeId: node.id, sessionId: run.sessionKey, agentId: node.assignedAgent });
+      }
+    }
     let wave = 0;
     const summary: RunOutcome = {
       runId,
@@ -110,21 +120,25 @@ export class GraphExecutor {
           if (failedDep) hasFailedDep = true;
           updateNode(config, node.id, { status: "BLOCKED", error: failedDep ? "dependência falhou" : "dependência bloqueada" });
           recordNodeEvent(config, runId, node.id, "blocked", { because: failedDep ? "failed_dependency" : "blocked_dependency" });
+          recordRunEvent(config, runId, "NODE_BLOCKED", { nodeId: node.id, sessionId: node.sessionId ?? undefined, agentId: node.assignedAgent, extra: { because: failedDep ? "failed_dependency" : "blocked_dependency" } });
           summary.blocked += 1;
           summary.outcomes.push({ nodeId: node.id, status: "BLOCKED", retryCount: node.retryCount, iteration: node.iteration });
         }
         const finalStatus = hasFailedDep ? "FAILED" : "BLOCKED";
         updateRunStatus(config, runId, finalStatus, { summary: collectProgress(config, runId) });
+        recordRunEvent(config, runId, finalStatus === "FAILED" ? "GRAPH_FAILED" : "GRAPH_BLOCKED", { sessionId: run.sessionKey, extra: { reason: "dependency_block" } });
         return this.finalize(config, runId, summary, finalStatus);
       }
 
       if (sched.ready.length === 0) {
         if (sched.complete) {
           updateRunStatus(config, runId, "COMPLETED", { summary: collectProgress(config, runId) });
+          recordRunEvent(config, runId, "GRAPH_COMPLETED", { sessionId: run.sessionKey, extra: { completed: summary.completed, reworked: summary.reworked } });
           return this.finalize(config, runId, summary, "COMPLETED");
         }
         if (sched.stalled) {
           updateRunStatus(config, runId, "BLOCKED", { error: "run estagnada: nó em RUNNING/REWORK sem progresso" });
+          recordRunEvent(config, runId, "GRAPH_BLOCKED", { sessionId: run.sessionKey, extra: { reason: "stalled" } });
           return this.finalize(config, runId, summary, "BLOCKED");
         }
         // no ready + no complete + no stalled + no blocked → everything final but partially failed
@@ -132,6 +146,7 @@ export class GraphExecutor {
         const hasFailed = nodes.some((n) => n.status === "FAILED");
         const finalStatus = hasBlocked && !hasFailed ? "BLOCKED" : "FAILED";
         updateRunStatus(config, runId, finalStatus, { summary: collectProgress(config, runId) });
+        recordRunEvent(config, runId, finalStatus === "FAILED" ? "GRAPH_FAILED" : "GRAPH_BLOCKED", { sessionId: run.sessionKey, extra: { reason: "no_progress" } });
         return this.finalize(config, runId, summary, finalStatus);
       }
 
@@ -170,6 +185,7 @@ export class GraphExecutor {
 
     updateNode(config, node.id, { status: "RUNNING", startedAt: node.startedAt ?? new Date().toISOString() });
     recordNodeEvent(config, runId, node.id, "started", { retry: node.retryCount });
+    recordRunEvent(config, runId, "NODE_STARTED", { nodeId: node.id, sessionId: node.sessionId ?? undefined, agentId: node.assignedAgent, extra: { retry: node.retryCount } });
 
     let outcome: { success: boolean; output?: Record<string, unknown> | null; error?: string | null; sessionId?: string | null; blocked?: boolean } | null = null;
 
@@ -245,19 +261,23 @@ export class GraphExecutor {
 
     // evaluator
     const verdict = evaluateNode(updated);
+    recordRunEvent(config, runId, "GRAPH_EVALUATED", { nodeId: node.id, sessionId: updated.sessionId ?? undefined, agentId: updated.assignedAgent, extra: { pass: verdict.pass, reason: verdict.reason.slice(0, 200) } });
     if (!verdict.pass) {
       if (updated.retryCount < this.limits.maxRetries) {
         const next = updateNode(config, node.id, { status: "REWORK", retryCount: updated.retryCount + 1, evidence: verdict.evidence, error: outcome.error ?? verdict.reason });
         recordNodeEvent(config, runId, node.id, "rework", { reason: verdict.reason, retry: next?.retryCount });
+        recordRunEvent(config, runId, updated.retryCount === 0 ? "NODE_REWORK" : "NODE_RETRY", { nodeId: node.id, sessionId: updated.sessionId ?? undefined, agentId: updated.assignedAgent, extra: { reason: verdict.reason.slice(0, 200), retry: next?.retryCount } });
         return { nodeId, status: "REWORK", retryCount: next?.retryCount ?? 1, iteration: node.iteration, error: verdict.reason };
       }
       const final = updateNode(config, node.id, { status: "FAILED", evidence: verdict.evidence, error: outcome.error ?? verdict.reason });
       recordNodeEvent(config, runId, node.id, "failed", { reason: verdict.reason });
+      recordRunEvent(config, runId, "NODE_FAILED", { nodeId: node.id, sessionId: updated.sessionId ?? undefined, agentId: updated.assignedAgent, extra: { reason: verdict.reason.slice(0, 200), retry: final?.retryCount } });
       return { nodeId, status: "FAILED", retryCount: final?.retryCount ?? node.retryCount, iteration: node.iteration, error: verdict.reason };
     }
 
     updateNode(config, node.id, { evidence: verdict.evidence });
     recordNodeEvent(config, runId, node.id, "completed", { evidence: verdict.evidence.length });
+    recordRunEvent(config, runId, "NODE_COMPLETED", { nodeId: node.id, sessionId: updated.sessionId ?? undefined, agentId: updated.assignedAgent, extra: { evidence: verdict.evidence.length, retry: updated.retryCount } });
     return { nodeId, status: "COMPLETED", retryCount: node.retryCount, iteration: node.iteration, error: null };
   }
 

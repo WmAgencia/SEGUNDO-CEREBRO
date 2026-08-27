@@ -131,7 +131,13 @@ export const goalCreateTool: ToolDefinition = {
         projectId: input.projectId ? String(input.projectId) : undefined,
         ownerAgent: "manager",
       });
-      return { success: true, output: { id: goal.id, name: goal.name, type: goal.type, status: goal.status } };
+      let vault: { note: string | null; action: string } | undefined;
+      try {
+        const { persistGoalNote } = await import("../../organization/graph-obsidian.ts");
+        const written = persistGoalNote(ctx.config, goal);
+        if (written.written && written.path) vault = { note: written.path, action: written.action };
+      } catch { vault = undefined; }
+      return { success: true, output: { id: goal.id, name: goal.name, type: goal.type, status: goal.status, ...(vault ? { vault } : {}) } };
     } finally {
       db.close();
     }

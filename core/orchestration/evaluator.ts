@@ -14,6 +14,8 @@ import { EvaluateVerdict, GraphNode } from "./types.ts";
 export function evaluateNode(node: GraphNode): EvaluateVerdict {
   const evidence: Array<{ kind: string; value: string }> = [...(node.evidence ?? [])];
   const requirePattern = node.evaluate?.require ?? null;
+  const requireCount = node.evaluate?.requireCount ?? 0;
+  const requireField = node.evaluate?.requireField ?? null;
   const outputText = node.output ? JSON.stringify(node.output) : "";
   const error = node.error ?? null;
 
@@ -32,6 +34,14 @@ export function evaluateNode(node: GraphNode): EvaluateVerdict {
     evidence.push({ kind: "tool_output", value: ok ? "registrado" : "ausente" });
     if (!ok) return { pass: false, reason: "tool não produziu saída", evidence };
     evidence.push({ kind: "tool_output_json", value: outputText.slice(0, 2000) });
+
+    if (requireCount > 0) {
+      const found = countOutput(node.output, requireField);
+      evidence.push({ kind: "count", value: `${found}/${requireCount}${requireField ? ` em "${requireField}"` : ""}` });
+      if (found < requireCount) {
+        return { pass: false, reason: `quantidade insuficiente: esperado ${requireCount}, encontrado ${found}${requireField ? ` em "${requireField}"` : ""}`, evidence };
+      }
+    }
   } else {
     // subagent node: needs actual output text + (when tested) test signal
     const hasOutput = outputText.trim().length > 0;
@@ -65,4 +75,14 @@ function toRegex(pattern: string): RegExp {
   } catch {
     return new RegExp(pattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
   }
+}
+
+function countOutput(output: unknown, field: string | null): number {
+  const target = field ? (output as Record<string, unknown>)?.[field] : output;
+  if (Array.isArray(target)) return target.length;
+  if (typeof target === "number") return target;
+  if (!target) return 0;
+  if (Array.isArray((output as Record<string, unknown>).hits)) return ((output as Record<string, unknown>).hits as unknown[]).length;
+  if (Array.isArray((output as Record<string, unknown>).results)) return ((output as Record<string, unknown>).results as unknown[]).length;
+  return 1;
 }

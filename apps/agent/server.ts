@@ -133,6 +133,19 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  // ── Graphs (painel discreto) ──
+  if (req.method === "GET" && p === "/api/graphs") {
+    try {
+      const { listRuns, listNodes } = await import("../../core/orchestration/graph-store.ts");
+      const runs = listRuns(config, undefined, Number(url.searchParams.get("limit") ?? 20));
+      const withNodes = runs.map((r) => ({ id: r.id, goal: r.goal, status: r.status, sessionKey: r.sessionKey, request: r.request, nodes: listNodes(config, r.id).map((n) => ({ id: n.id, title: n.title, status: n.status, error: n.error, retryCount: n.retryCount })) }));
+      send(res, 200, { runs: withNodes });
+    } catch (error) {
+      send(res, 200, { runs: [], error: error instanceof Error ? error.message : String(error) });
+    }
+    return;
+  }
+
   // ── Agenda ──
   if (req.method === "GET" && p === "/api/agenda") {
     send(res, 200, { events: listAgendaEvents(config) });

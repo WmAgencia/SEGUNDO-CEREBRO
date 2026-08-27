@@ -15,7 +15,7 @@
 import { DatabaseSync } from "node:sqlite";
 import type { BrainConfig } from "../config/loader.ts";
 import { openDatabase } from "../../storage/connection.ts";
-import { updateRunStatus, touchRun, updateNode, recordNodeEvent, listNodes } from "./graph-store.ts";
+import { updateRunStatus, touchRun, updateNode, recordNodeEvent, recordRunEvent, listNodes } from "./graph-store.ts";
 import { orchestrationLimits } from "./types.ts";
 
 export interface RecoveredRun {
@@ -77,6 +77,68 @@ export function markStaleForTest(config: BrainConfig, runId: string, oldTimestam
   const db = openDatabase(config.dbPath);
   try {
     db.prepare("UPDATE graph_runs SET updated_at = ? WHERE id = ?").run(oldTimestampIso, runId);
+  } finally {
+    db.close();
+  }
+}
+
+/**
+ * Retomada real de um run interrompido (FASE 3.6): após recovery marcar o run
+ * como BLOCKED, esta função prepara o run para re-executar apenas o que ainda
+ * não foi concluído — nunca duplica uma ação já confirmada como COMPLETED.
+ *
+ * Regras:
+ *   - nós COMPLETED permanecem COMPLETED (nunca re-executados);
+ *   - nós RUNNING/READY/PENDING/REWORK voltam a READY (re-executam);
+ *   - nós BLOCKED por causa do recovery stale voltam a READY (interrompidos,
+ *     não falharam de verdade);
+ *   - nós FAILED/CANCELLED e nós BLOCKED por dependência falha permanecem
+ *     BLOCKED (denunciam problema real);
+ *   - o run volta a PLANNED para o executor re-agendar.
+ */
+export function prepareResume(config: BrainConfig, runId: string): { resumedNodes: number; keptCompleted: number; blockedNodes: number } {
+  const db = openDatabase(config.dbPath);
+  const result = { resumedNodes: 0, keptCompleted: 0, blockedNodes: 0 };
+  try {
+    const run = db.prepare("SELECT status, session_key FROM graph_runs WHERE id = ?").get(runId) as
+      | { status: string; session_key: string }
+      | undefined;
+    if (!run) throw new Error(`run not found: ${runId}`);
+    if (run.status !== "BLOCKED" && run.status !== "FAILED" && run.status !== "PLANNED" && run.status !== "RUNNING") {
+      throw new Error(`run ${runId} está em ${run.status} e não pode ser retomado`);
+    }
+
+    let hasFailedDep = false;
+    const nodes = listNodes(config, runId);
+    const failedIds = new Set(nodes.filter((n) => n.status === "FAILED").map((n) => n.id));
+    for (const node of nodes) {
+      if (node.status === "COMPLETED") { result.keptCompleted += 1; continue; }
+      const depFailed = node.dependencies.some((d) => failedIds.has(d));
+      if (depFailed) {
+        updateNode(config, node.id, { status: "BLOCKED", error: "dependência falhou" });
+        result.blockedNodes += 1;
+        hasFailedDep = true;
+        continue;
+      }
+      if (node.status === "RUNNING" || node.status === "READY" || node.status === "PENDING" || node.status === "REWORK"
+        || (node.status === "BLOCKED" && (node.error ?? "").toLowerCase().includes("stale"))) {
+        updateNode(config, node.id, { status: "READY", error: null });
+        recordNodeEvent(config, runId, node.id, "resumed_from_recovery", { at: new Date().toISOString() });
+        result.resumedNodes += 1;
+      } else {
+        updateNode(config, node.id, { status: "BLOCKED" });
+        result.blockedNodes += 1;
+      }
+    }
+
+    const finalStatus = hasFailedDep ? "FAILED" : "PLANNED";
+    updateRunStatus(config, runId, finalStatus, { resumed: true, at: new Date().toISOString(), blockedNodes: result.blockedNodes });
+    touchRun(config, runId);
+    recordRunEvent(config, runId, "GRAPH_RECOVERED", {
+      sessionId: run.session_key,
+      extra: { action: "resume", resumedNodes: result.resumedNodes, keptCompleted: result.keptCompleted, runStatus: finalStatus },
+    });
+    return result;
   } finally {
     db.close();
   }

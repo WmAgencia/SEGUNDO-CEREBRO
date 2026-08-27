@@ -60,7 +60,7 @@ export interface GraphNode {
   startedAt: string | null;
   completedAt: string | null;
   evidence: Array<{ kind: string; value: string }>;
-  evaluate: { criterion?: string; require?: string; toolId?: string; nodeType?: GraphNodeType };
+  evaluate: { criterion?: string; require?: string; toolId?: string; nodeType?: GraphNodeType; requireCount?: number; requireField?: string };
   updatedAt: string;
 }
 
@@ -91,6 +91,8 @@ export interface GraphPlanInput {
   input?: Record<string, unknown>;
   toolId?: string;
   requireOutputPattern?: string;
+  requireCount?: number;
+  requireField?: string;
 }
 
 export interface GraphPlan {
