@@ -111,11 +111,30 @@ limpo. `git diff --check` limpo.**
 
 | Passo | Resultado |
 |---|---|
-| commit | ✅ criado e enviado |
-| push `origin/main` | ✅ PASS REAL (sem force push) |
-| deployment Vercel | ver resultado abaixo (via `vercel --prod`) |
-| HTML de produção | verificado após deploy (este relatório é atualizado se necessário) |
-| `/api/*` em produção | **PARTIAL esperado**: deploy estático não tem backend; APIs requerem o server local/Railway (`SECOND_BRAIN_API`). `/api/health` etc. em produção = NOT VALIDATED até backend persistente existir |
+| commit | ✅ `2593f5a` |
+| push `origin/main` | ✅ PASS REAL (`3cc9294..2593f5a`, sem force push) |
+| deployment Vercel | ✅ PASS REAL — `vercel --prod` → deployment `rhxr0q7dn` |
+| HTML de produção | ✅ PASS REAL — `https://segundo-cerebro-consecom.vercel.app` retorna a UI nova (title "Second Brain", sidebar, composer; sem HQ, sem dashboard) |
+| assets | ✅ PASS REAL — `/style.css` (16KB, text/css), `/app.js` (28KB, JS), `/config.js` (243B), todos 200 |
+| JavaScript | ✅ PASS REAL (app.js servido com content-type correto) |
+| `/api/health`, `/api/sessions`, `/api/chat` em produção | ⚠️ **BLOCKED** — deploy estático não tem backend; retornam 404. Requer runtime persistente (Railway/VPS) + `SECOND_BRAIN_API` em `config.js` |
+
+### Problemas encontrados na Vercel (e correções aplicadas)
+
+1. **Root Directory do projeto era `apps/hq`** (configurado no servidor, não no
+   repo): todo deploy servia o escritório antigo independentemente do
+   `vercel.json` da raiz.
+   → corrigido: `vercel project update segundo-cerebro --auto-detect root-directory`.
+2. **Framework preset era Vite**: build tentava `vite build` em projeto estático.
+   → corrigido: `--framework other`.
+3. **SSO Protection (`all_except_custom_domains`)** bloqueava acesso anônimo ao
+   alias de produção (retornava o dashboard da Vercel).
+   → corrigido: `vercel project protection disable segundo-cerebro --sso`.
+4. Antes das correções, deployments subiam com output vazio (página dashboard em
+   todos os caminhos) — confirmado por inspeção direta.
+
+**URLs finais:** produção `https://segundo-cerebro-consecom.vercel.app` (alias
+adicional `https://segundo-cerebro-jet.vercel.app`).
 
 ---
 
@@ -123,8 +142,8 @@ limpo. `git diff --check` limpo.**
 
 | Critério | Veredito |
 |---|---|
-| Antigo HQ não aparece (produção serve o agent UI) | ✅ (validado pós-deploy) |
-| ChatGPT-like aparece | ✅ |
+| Antigo HQ não aparece (produção serve o agent UI) | ✅ PASS REAL (verificado na URL de produção) |
+| ChatGPT-like aparece | ✅ PASS REAL |
 | Novo chat / sessões / mensagens | ✅ PASS REAL |
 | Streaming (eventos reais) | ✅ PASS REAL |
 | Ferramentas (cards + execução) | ✅ PASS REAL |
@@ -135,7 +154,7 @@ limpo. `git diff --check` limpo.**
 | Contexto multi-sessão | ✅ PASS REAL (context compiler + memory/goals no contexto) |
 | Obsidian continua funcionando | ✅ (nada alterado no fluxo) |
 | Testes / typecheck | ✅ 476 testes / limpo |
-| Deploy Vercel | ⚠️ ver passo 4 |
+| Deploy Vercel | ✅ PASS REAL (produção verificada; `/api/*` BLOCKED até backend persistente) |
 
 ### Blocos / parciais conhecidos
 - **Backend em produção**: arquitetura local-first; Vercel é estática. Sem
