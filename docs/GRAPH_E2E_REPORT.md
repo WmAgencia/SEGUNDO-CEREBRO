@@ -19,7 +19,7 @@ Data: 2026-08-27 · Branch `main` · Solução: Single Agent como ORCHESTRATOR
 | Sessão continua corretamente | ✅ **PASS REAL** |
 | Evidências persistidas | ✅ **PASS REAL** |
 | Subagentes OpenCode reais em execução | ⚠️ **PARTIAL** (CLI ok, execução depende de chave de modelo/provider) |
-| Push para `origin/main` | ⚠️ **BLOCKED** (credencial GitHub incorreta na máquina) |
+| Push para `origin/main` | ✅ **PASS REAL** (commit `95de321` enviado; credencial agora autenticada) |
 | CI/build externo | ⚠️ **NOT VALIDATED** (sem CI configurado neste repo local) |
 | Deploy/produção | ⚠️ **BLOCKED/NOT VALIDATED** |
 
