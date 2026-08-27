@@ -1,12 +1,14 @@
 /**
  * Subagent definitions — the few REAL specialists the orchestrator uses.
  *
- * These map 1:1 to native OpenCode subagents declared in `.opencode/agents/`
- * (markdown frontmatter), invoked via `opencode run --agent <id>`. No fake
+ * These map 1:1 to native OpenCode agents declared in `.opencode/agents/`
+ * (markdown frontmatter, `mode: all` so they can run both as subagents and be
+ * invoked directly by the graph via `opencode run --agent <id>`). No fake
  * agents: if the subagent is unavailable, the node goes BLOCKED.
  *
- * Rule of the phase: no permanent army of agents. Only these five, and only
- * create more when there is proven need.
+ * Roles (FASE 4): researcher / developer / reviewer / verifier (qa e explorer
+ * apoiam). O ORCHESTRATOR é o próprio Graph Engine (determinístico) — não é um
+ * agente LLM. Rule of the phase: no permanent army of agents.
  */
 
 export interface SubagentDef {
@@ -49,9 +51,16 @@ export const SUBAGENTS: readonly SubagentDef[] = [
   {
     id: "reviewer",
     role: "Revisão",
-    description: "Revisa código/resultados e aponta problemas.",
+    description: "Revisa código/resultados e aponta problemas concretos.",
     readOnly: true,
-    prompt: "Revise com foco em correção, segurança e clareza. Aponte problemas concretos com referência a arquivos/linhas. Não altere arquivos.",
+    prompt: "Revise com foco em correção, segurança e clareza. Aponte problemas concretos com referência a arquivos/linhas. Se correto e com evidência, diga APROVADO. Não altera arquivos.",
+  },
+  {
+    id: "verifier",
+    role: "Verificação final",
+    description: "Verificação ponta a ponta do trabalho concluído, com evidência real.",
+    readOnly: true,
+    prompt: "Verifique o resultado de ponta a ponta executando/inspecionando de verdade. Relate PASS/FAIL com evidência concreta (testes, diff, arquivos). Não declare sucesso sem evidência.",
   },
 ];
 

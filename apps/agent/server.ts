@@ -221,23 +221,31 @@ export function createAgentServer(options: AgentServerOptions): { server: Server
       return;
     }
     const graphMatch = p.match(/^\/api\/graphs\/([^/]+)$/);
-    if (req.method === "GET" && graphMatch?.[1]) {
+    const graphNodesMatch = p.match(/^\/api\/graphs\/([^/]+)\/nodes$/);
+    const graphEventsMatch = p.match(/^\/api\/graphs\/([^/]+)\/events$/);
+    if (req.method === "GET" && (graphMatch?.[1] || graphNodesMatch?.[1] || graphEventsMatch?.[1])) {
       try {
         const { getRun, listNodes, nodeHistory } = await import("../../core/orchestration/graph-store.ts");
-        const runId = decodeURIComponent(graphMatch[1]!);
+        const runId = decodeURIComponent((graphMatch?.[1] ?? graphNodesMatch?.[1] ?? graphEventsMatch?.[1])!);
         const run = getRun(config, runId);
         if (!run) { send(res, 404, { error: "run not found" }); return; }
         const nodes = listNodes(config, runId);
-        const events = nodeHistory(config, runId).slice(-40);
+        const mapNode = (n: typeof nodes[number]) => ({
+          id: n.id, title: n.title, status: n.status, type: n.type,
+          agentId: n.assignedAgent, sessionId: n.sessionId,
+          attempt: n.retryCount, parentNodeIds: n.dependencies,
+          error: n.error, dependencies: n.dependencies,
+          evidence: (n.evidence ?? []).slice(0, 8),
+          startedAt: n.startedAt, completedAt: n.completedAt,
+          durationMs: n.startedAt && n.completedAt ? Math.max(0, Date.parse(n.completedAt) - Date.parse(n.startedAt)) : null,
+          output: n.output ?? null,
+        });
+        if (graphNodesMatch?.[1]) { send(res, 200, { runId, nodes: nodes.map(mapNode) }); return; }
+        if (graphEventsMatch?.[1]) { send(res, 200, { runId, events: nodeHistory(config, runId) }); return; }
         send(res, 200, {
           run: { id: run.id, goal: run.goal, status: run.status, request: run.request, sessionKey: run.sessionKey, createdAt: run.createdAt, updatedAt: run.updatedAt, completedAt: run.completedAt, result: run.result },
-          nodes: nodes.map((n) => ({
-            id: n.id, title: n.title, status: n.status, type: n.type, assignedAgent: n.assignedAgent,
-            error: n.error, retryCount: n.retryCount, dependencies: n.dependencies,
-            evidence: (n.evidence ?? []).slice(0, 8),
-            startedAt: n.startedAt, completedAt: n.completedAt,
-          })),
-          events,
+          nodes: nodes.map(mapNode),
+          events: nodeHistory(config, runId).slice(-40),
         });
       } catch (error) {
         send(res, 500, { error: error instanceof Error ? error.message : String(error) });

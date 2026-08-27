@@ -14,6 +14,7 @@
  */
 
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import type { BrainConfig } from "../../config/loader.ts";
 
 // Subset of the actual OpenCodeSession shape we need.
@@ -46,11 +47,16 @@ export interface SubagentRunner {
 }
 
 export function resolveOpenCodeCommand(): string {
-  const candidates =
-    process.platform === "win32"
-      ? ["node_modules/.bin/opencode.cmd", "opencode.cmd", "opencode"]
-      : ["opencode"];
-  return candidates[0] ?? "opencode";
+  // Prefer a project-local binary when present; otherwise resolve `opencode`
+  // from PATH (global install). On Windows the global shim is a .ps1/.cmd
+  // resolved by the shell, so we return the bare name and spawn with shell.
+  if (process.platform === "win32") {
+    for (const c of ["node_modules/.bin/opencode.cmd", "node_modules/.bin/opencode.exe", "node_modules/.bin/opencode"]) {
+      if (existsSync(c)) return c;
+    }
+    return "opencode";
+  }
+  return "opencode";
 }
 
 let cachedAvailability: boolean | null = null;
@@ -109,8 +115,11 @@ export class OpenCodeSubagentRunner implements SubagentRunner {
       return { ok: false, status: "BLOCKED", output: "", sessionId: null, filesChanged: [], testsPassed: false, error: "OpenCode CLI indisponível (não encontrado no ambiente)", unavailable: true, durationMs: Date.now() - started };
     }
 
+    // Model is configurable (FASE 4, seção 15): explicit node model > env > none.
+    // Never hardcode a model here.
+    const model = opts.model ?? process.env.SECOND_BRAIN_GRAPH_MODEL ?? null;
     const args = ["run", "--format", "json", "--agent", opts.agentId];
-    if (opts.model) args.push("--model", opts.model);
+    if (model) args.push("--model", model);
     if (opts.parentSessionId) args.push("--session", opts.parentSessionId);
     args.push(opts.task);
 
@@ -144,28 +153,33 @@ export class OpenCodeSubagentRunner implements SubagentRunner {
       proc.on("close", (code) => {
         clearTimeout(timer);
         durationMs = Date.now() - started;
-        if (code === 0) {
-          const evt = parseLastTextEvent(stdout);
+        const parsed = parseOpenCodeOutput(stdout);
+        // HONEST result: only COMPLETED when there is real assistant text.
+        // OpenCode can exit 0 while emitting an error event (e.g. model
+        // capacity/rate limit) — that must surface as FAILED with evidence,
+        // never as a fake success.
+        if (parsed.text.trim().length > 0 && !parsed.fatalError) {
           resolve({
             ok: true,
             status: "COMPLETED",
-            output: redact((evt ?? stdout).slice(0, 8000)),
-            sessionId: extractSessionId(stdout) ?? null,
-            filesChanged: extractFilesChanged(stdout),
-            testsPassed: /passed|OK|success/i.test(`${stdout}\n${stderr}`),
+            output: redact(parsed.text.slice(0, 8000)),
+            sessionId: parsed.sessionId,
+            filesChanged: parsed.filesChanged.length ? parsed.filesChanged : extractFilesChanged(stdout),
+            testsPassed: parsed.testsPassed ?? /passed|\bOK\b|success/i.test(`${stdout}\n${stderr}`),
             error: null,
             unavailable: false,
             durationMs,
           });
         } else {
+          const errMsg = parsed.fatalError ?? (stderr.trim() ? redact(stderr.slice(0, 1000)) : `exit code ${code}${code === 0 ? " (sem resposta do modelo)" : ""}`);
           resolve({
             ok: false,
             status: "FAILED",
-            output: redact(`${stdout}\n${stderr}`.slice(0, 4000)),
-            sessionId: extractSessionId(stdout) ?? null,
-            filesChanged: extractFilesChanged(stdout),
+            output: redact((parsed.text || stdout).slice(0, 4000)),
+            sessionId: parsed.sessionId,
+            filesChanged: parsed.filesChanged,
             testsPassed: false,
-            error: redact(stderr.slice(0, 1000) || `exit code ${code}`),
+            error: redact(errMsg.slice(0, 1000)),
             unavailable: false,
             durationMs,
           });
@@ -180,19 +194,64 @@ export class OpenCodeSubagentRunner implements SubagentRunner {
   }
 }
 
-function extractSessionId(output: string): string | null {
-  const match = /"sessionID?"\s*:\s*"([^"]+)"/i.exec(output);
-  return match?.[1] ?? null;
+/**
+ * Parses OpenCode `--format json` stdout: a stream of JSON-line events.
+ * Extracts the session id, the last assistant text, any file edits, the test
+ * signal, and a fatal LLM error (e.g. ContextOverflow / rate limit). Returns
+ * empty text + fatalError when the run produced no usable answer, so the graph
+ * marks the node FAILED (never a fake success).
+ */
+export function parseOpenCodeOutput(stdout: string): {
+  sessionId: string | null;
+  text: string;
+  filesChanged: string[];
+  testsPassed: boolean | null;
+  fatalError: string | null;
+} {
+  let sessionId: string | null = null;
+  let text = "";
+  const filesChanged: string[] = [];
+  let testsPassed: boolean | null = null;
+  let fatalError: string | null = null;
+
+  for (const line of stdout.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("{")) continue;
+    let evt: Record<string, unknown>;
+    try { evt = JSON.parse(trimmed) as Record<string, unknown>; } catch { continue; }
+
+    if (typeof evt.sessionID === "string") sessionId = evt.sessionID;
+
+    const type = String(evt.type ?? "");
+    if (type === "error") {
+      const err = evt.error as { name?: string; data?: { message?: string } } | undefined;
+      fatalError = err?.data?.message ?? err?.name ?? "erro desconhecido do OpenCode";
+    }
+
+    // Assistant text can arrive in message/text events depending on version.
+    const msg = evt.message as { content?: Array<{ type?: string; text?: string }> } | undefined;
+    if (msg?.content) {
+      for (const part of msg.content) {
+        if (part?.type === "text" && typeof part.text === "string") text = part.text;
+      }
+    }
+    if (typeof evt.text === "string" && (evt.text as string).trim()) text = evt.text as string;
+
+    // Tool/file evidence
+    const tool = evt.tool as string | undefined;
+    if (tool === "write" || tool === "edit" || tool === "apply_patch") {
+      const fp = (evt.file ?? evt.path ?? evt.filePath) as string | undefined;
+      if (fp) filesChanged.push(fp);
+    }
+    if (/test|vitest|pytest/i.test(trimmed) && /\bpassed\b/i.test(trimmed)) testsPassed = true;
+  }
+
+  return { sessionId, text, filesChanged: [...new Set(filesChanged)].slice(0, 40), testsPassed, fatalError };
 }
 
 function extractFilesChanged(output: string): string[] {
   const matches = [...output.matchAll(/(?:Modified|Created|Edited|Updated):\s*(.+)/gi)];
   return [...new Set(matches.map((m) => (m[1] ?? "").trim().replace(/,$/, "")))].filter(Boolean).slice(0, 20);
-}
-
-function parseLastTextEvent(output: string): string | null {
-  const lines = output.split("\n").filter((l) => l.trim().length > 0);
-  return lines.length ? lines[lines.length - 1]! : null;
 }
 
 const SECRET_PATTERNS: RegExp[] = [/gsk_[A-Za-z0-9]{10,}/g, /sk-or-v1-[A-Za-z0-9]+/g, /hf_[A-Za-z0-9]+/g, /sk_[A-Za-z0-9]{10,}/g];

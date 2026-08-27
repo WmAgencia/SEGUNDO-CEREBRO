@@ -1,6 +1,6 @@
 ---
 description: Pesquisa e investigação com evidência (read-only)
-mode: subagent
+mode: all
 permission:
   edit: deny
   bash: deny

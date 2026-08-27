@@ -167,6 +167,12 @@ describe("FASE 3.6 — E2E REAL (TESTE 1..10)", { timeout: 60_000 }, () => {
 
   it("TESTE 5b — GRAPH via SingleAgent: LLM decide usar graph_plan e graph_execute (pipeline real)", async () => {
     const { config } = setup();
+    // FASE 4: o OpenCode agora é REAL (resolveOpenCodeCommand corrige o PATH). O
+    // grafo "rebuild" tem nós subagent que invocam OpenCode de verdade; sem
+    // capacidade de LLM eles bloqueiam. Timeout curto mantém o teste rápido e
+    // honesto (o primeiro nó falha, os demais bloqueiam por dependência).
+    const prevTimeout = process.env.OPENCODE_TIMEOUT_MS;
+    process.env.OPENCODE_TIMEOUT_MS = "1500";
     let state = 0;
     const agent = new SingleAgent({
       llm: async () => {
@@ -179,12 +185,18 @@ describe("FASE 3.6 — E2E REAL (TESTE 1..10)", { timeout: 60_000 }, () => {
         return { content: "Plano executado com sucesso. Resumi o resultado." };
       },
     });
-    const res = await agent.chat(config, "e2e-ag", "colocar o ClipCom funcionando", async () => true);
-    expect(res.type).toBe("answer");
-    expect(listRuns(config, "e2e-ag").some((r) => r.request.includes("ClipCom"))).toBe(true);
-    // graph_execute foi invocado (mesmo que subagentes reais estejam indisponíveis no CI, o loop foi até o fim)
-    expect(res.toolResults?.some((t) => t.toolId === "graph_execute")).toBe(true);
-  });
+    try {
+      const res = await agent.chat(config, "e2e-ag", "colocar o ClipCom funcionando", async () => true);
+      expect(res.type).toBe("answer");
+      expect(listRuns(config, "e2e-ag").some((r) => r.request.includes("ClipCom"))).toBe(true);
+      // graph_execute foi invocado e o loop foi até o fim (nós subagent ficam
+      // BLOCKED/FAILED por capacidade — nunca sucesso falso)
+      expect(res.toolResults?.some((t) => t.toolId === "graph_execute")).toBe(true);
+    } finally {
+      if (prevTimeout === undefined) delete process.env.OPENCODE_TIMEOUT_MS;
+      else process.env.OPENCODE_TIMEOUT_MS = prevTimeout;
+    }
+  }, 40000);
 
   it("TESTE 6 — PARALLEL: dois nós independentes rodam na mesma wave (paralelo real)", async () => {
     const { config } = setup();

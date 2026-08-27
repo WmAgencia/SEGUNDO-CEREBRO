@@ -223,11 +223,13 @@ export class GraphExecutor {
         }
       }
       if (!outcome) {
-        const taskText = buildTaskText(node, input);
+        const depsContext = collectDependencyResults(config, runId, node);
+        const taskText = buildTaskText(node, input, depsContext);
         const res = await this.subagentRunner.run({
           agentId,
           task: taskText,
           cwd: resolveWorkspace(config),
+          model: typeof input.model === "string" ? input.model : undefined,
           timeoutMs: this.limits.opencodeTimeoutMs,
         });
         outcome = {
@@ -300,14 +302,34 @@ export class GraphExecutor {
   }
 }
 
-function buildTaskText(node: { title: string; description: string; input: Record<string, unknown> }, input: Record<string, unknown>): string {
+function buildTaskText(node: { title: string; description: string; input: Record<string, unknown> }, input: Record<string, unknown>, depsContext = ""): string {
   const parts = [
     `Tarefa do grafo: ${node.title}`,
     node.description,
     input.task ? String(input.task) : undefined,
     input.request ? `Pedido do usuário: ${String(input.request)}` : undefined,
+    depsContext ? `Resultado dos nós anteriores:\n${depsContext}` : undefined,
   ].filter(Boolean);
   return parts.join("\n\n").slice(0, 6000);
+}
+
+/**
+ * FASE 4 (seção 8): contexto sob demanda — reúne apenas o resultado dos nós de
+ * dependência já concluídos (não o vault inteiro), para o agente trabalhar com
+ * base real no que o grafo já produziu.
+ */
+function collectDependencyResults(config: BrainConfig, runId: string, node: { id: string; dependencies: string[] }): string {
+  if (!node.dependencies?.length) return "";
+  const all = listNodes(config, runId);
+  const deps = all.filter((n) => node.dependencies.includes(n.id) && n.status === "COMPLETED");
+  if (!deps.length) return "";
+  return deps
+    .map((d) => {
+      const out = d.output ? JSON.stringify(d.output) : "";
+      return `- [${d.title}] ${out.slice(0, 800)}`;
+    })
+    .join("\n")
+    .slice(0, 2400);
 }
 
 function resolveWorkspace(config: BrainConfig): string {
