@@ -122,7 +122,7 @@ export interface ChatResponse {
 }
 
 // Tool types
-export type Permission = 'READ' | 'WRITE' | 'EXECUTE' | 'DELETE' | 'NETWORK' | 'ADMIN';
+export type Permission = 'READ' | 'WRITE' | 'EXECUTE' | 'DELETE' | 'EXTERNAL' | 'NETWORK' | 'ADMIN';
 
 export type RiskLevel = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
 

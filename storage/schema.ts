@@ -215,6 +215,18 @@ export const SCHEMA_STATEMENTS: readonly string[] = [
   `CREATE INDEX IF NOT EXISTS idx_events_time ON events(occurred_at)`,
   `CREATE INDEX IF NOT EXISTS idx_events_subject ON events(subject)`,
 
+  `CREATE TABLE IF NOT EXISTS agenda_events (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    title       TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    starts_at   TEXT NOT NULL,
+    ends_at     TEXT,
+    project     TEXT,
+    status      TEXT NOT NULL DEFAULT 'scheduled',
+    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_agenda_starts ON agenda_events(starts_at)`,
+
   `CREATE TABLE IF NOT EXISTS memories (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     memory_kind TEXT NOT NULL,
