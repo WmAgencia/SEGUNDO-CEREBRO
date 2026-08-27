@@ -4,8 +4,8 @@
  */
 
 import { DatabaseSync } from "node:sqlite";
-import { AgentState, ManagerIntent, ChatResponse, UserInput, BrainConfig } from "./types";
-import { compileContext } from "./context-compiler";
+import { AgentState, ManagerIntent, ChatResponse, UserInput, BrainConfig, Plan } from "./types.js";
+import { compileContext } from "./context-compiler.js";
 
 // Mock implementations - will be replaced with actual logic
 export async function chatEngine(
@@ -114,7 +114,7 @@ function generateGreeting(): string {
     "Olá! Estou aqui para conversar com você.",
     "E aí! O que você está pensando agora?"
   ];
-  return greetings[Math.floor(Math.random() * greetings.length)];
+  return greetings[Math.floor(Math.random() * greetings.length)] ?? "Oi!";
 }
 
 function handleStop(db: DatabaseSync, session: any): ChatResponse {
@@ -144,7 +144,7 @@ function handleModeSwitch(db: DatabaseSync, session: any, input: string): ChatRe
   };
 }
 
-async function createPlan(input: string, session: any): Promise<any> {
+async function createPlan(input: string, session: any): Promise<Plan> {
   // In real implementation: parse input and create structured plan
   return {
     id: `plan-${Date.now()}`,

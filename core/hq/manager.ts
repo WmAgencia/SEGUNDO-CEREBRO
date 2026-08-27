@@ -267,13 +267,16 @@ async function callLLM(config: BrainConfig, s: ManagerSession, userMessage: stri
   ];
 
   // Usa o GATEWAY centralizado — nunca cria provider diretamente
+  const gatewayDb = new DatabaseSync(config.dbPath);
   try {
-    const result = await completeWithGateway(new DatabaseSync(config.dbPath), { messages, maxTokens: 550, temperature: 0.3 }, { workload: 'reasoning', agent: 'manager', task: userMessage });
+    const result = await completeWithGateway(gatewayDb, { messages, maxTokens: 550, temperature: 0.3 }, { workload: 'reasoning', agent: 'manager', task: userMessage });
     console.log(`[manager] LLM responded via ${result.provider}/${result.model} (${result.latencyMs}ms)`);
     return result.content;
   } catch (error) {
     console.error(`[manager] Gateway falhou: ${error instanceof Error ? error.message.slice(0, 200) : String(error)}`);
     return null;
+  } finally {
+    gatewayDb.close();
   }
 }
 

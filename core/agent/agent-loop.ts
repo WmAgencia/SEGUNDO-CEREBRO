@@ -4,14 +4,15 @@
  */
 
 import { DatabaseSync } from "node:sqlite";
-import { AgentState, AgentEventType, AgentEvent, UserInput, BrainConfig } from "./types";
-import { compileContext } from "./context-compiler";
-import { chatEngine } from "./chat-engine";
+import { AgentState, AgentEventType, AgentEvent, UserInput, BrainConfig } from "./types.js";
+import { compileContext } from "./context-compiler.js";
+import { chatEngine } from "./chat-engine.js";
 
 // Mock implementations - will be replaced with actual logic
 export async function* agentLoop(
   input: UserInput, 
-  state: AgentState
+  state: AgentState,
+  config: BrainConfig
 ): AsyncGenerator<AgentEvent> {
   // 1. OBSERVE — input do usuário + estado atual
   yield { type: 'OBSERVE', input, state };
@@ -21,7 +22,7 @@ export async function* agentLoop(
   yield { type: 'UNDERSTAND', understanding };
   
   // 3. RETRIEVE CONTEXT — just-in-time
-  const context = await compileContext(understanding, state);
+  const context = await compileContext(understanding, config.dbPath);
   yield { type: 'CONTEXT', context };
   
   // 4. REASON — LLM com contexto compilado

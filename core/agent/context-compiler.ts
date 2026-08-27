@@ -4,7 +4,7 @@
  */
 
 import { DatabaseSync } from "node:sqlite";
-import { CompiledContext, RelatedEntityInfo, TimelineEntryLite, DocumentRef, ResolveMethod } from "./types";
+import { CompiledContext, RelatedEntityInfo, TimelineEntryLite, DocumentRef, ResolveMethod } from "./types.js";
 
 // Mock implementations - will be replaced with actual database queries
 export async function compileContext(
