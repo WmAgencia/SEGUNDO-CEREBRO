@@ -5,7 +5,7 @@
  * - image_generate → Pollinations FLUX free (core/tools/image-tools.ts)
  */
 
-import { ToolDefinition, ToolExecutionContext } from "./registry.js";
+import type { ToolDefinition, ToolExecutionContext } from "./registry.ts";
 import { webSearch, webFetch } from "../../tools/web-tools.ts";
 import { generateImage } from "../../tools/image-tools.ts";
 

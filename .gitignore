@@ -13,3 +13,7 @@ core/second-brain.db-*
 secrets/
 *.log
 .DS_Store
+tools/
+data/
+skills-sources/
+AUDIT_REPORT.md

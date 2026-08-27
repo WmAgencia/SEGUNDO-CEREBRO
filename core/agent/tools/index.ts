@@ -5,11 +5,12 @@
  * (e.g. WhatsApp open state) is checked at execution time.
  */
 
-import { ToolRegistry } from "./registry.js";
-import { brainSearchTool, memorySearchTool, memoryWriteTool, obsidianSyncTool } from "./knowledge-tools.js";
-import { webSearchTool, webFetchTool, imageGenerateTool, goalCreateTool, goalListTool } from "./web-media-tools.js";
-import { whatsappSendTool, whatsappStatusTool, opencodeRunTool } from "./comms-tools.js";
-import { agendaCreateTool, agendaListTool } from "./agenda-tools.js";
+import { ToolRegistry } from "./registry.ts";
+import { brainSearchTool, memorySearchTool, memoryWriteTool, obsidianSyncTool } from "./knowledge-tools.ts";
+import { webSearchTool, webFetchTool, imageGenerateTool, goalCreateTool, goalListTool } from "./web-media-tools.ts";
+import { whatsappSendTool, whatsappStatusTool, opencodeRunTool } from "./comms-tools.ts";
+import { agendaCreateTool, agendaListTool } from "./agenda-tools.ts";
+import { graphPlanTool, graphExecuteTool, graphStatusTool, graphListTool, graphRecoverTool } from "./graph-tools.ts";
 
 export function createDefaultRegistry(): ToolRegistry {
   return new ToolRegistry()
@@ -26,10 +27,15 @@ export function createDefaultRegistry(): ToolRegistry {
     .register(whatsappStatusTool)
     .register(opencodeRunTool)
     .register(agendaCreateTool)
-    .register(agendaListTool);
+    .register(agendaListTool)
+    .register(graphPlanTool)
+    .register(graphExecuteTool)
+    .register(graphStatusTool)
+    .register(graphListTool)
+    .register(graphRecoverTool);
 }
 
-export { ToolRegistry } from "./registry.js";
-export { ToolExecutor } from "./executor.js";
-export type { ToolDefinition, ToolExecutionContext } from "./registry.js";
-export type { ExecutedTool, ExecuteOptions } from "./executor.js";
+export { ToolRegistry } from "./registry.ts";
+export { ToolExecutor } from "./executor.ts";
+export type { ToolDefinition, ToolExecutionContext } from "./registry.ts";
+export type { ExecutedTool, ExecuteOptions } from "./executor.ts";

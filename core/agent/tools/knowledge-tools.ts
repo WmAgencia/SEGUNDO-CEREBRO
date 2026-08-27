@@ -6,7 +6,7 @@
  * - obsidian_sync  → core/indexing/vault-indexer.ts (indexVault) [WRITE, needs approval]
  */
 
-import { ToolDefinition, ToolExecutionContext } from "./registry.js";
+import type { ToolDefinition, ToolExecutionContext } from "./registry.ts";
 import { searchDocuments } from "../../retrieval/searcher.ts";
 import { searchMemories, createMemory } from "../../memory/memory-engine.ts";
 import { indexVault } from "../../indexing/vault-indexer.ts";

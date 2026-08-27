@@ -1,4 +1,4 @@
-export const SCHEMA_VERSION = 22;
+export const SCHEMA_VERSION = 23;
 
 export interface Migration {
   from: number;
@@ -767,6 +767,49 @@ export const SCHEMA_STATEMENTS: readonly string[] = [
      phone          TEXT,
      updated_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
    )`,
+  `CREATE TABLE IF NOT EXISTS graph_runs (
+    id TEXT PRIMARY KEY,
+    session_key TEXT NOT NULL,
+    request TEXT NOT NULL,
+    goal TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'PLANNED',
+    planner TEXT NOT NULL DEFAULT 'rule',
+    project_id TEXT,
+    max_parallel INTEGER NOT NULL DEFAULT 2,
+    max_retries INTEGER NOT NULL DEFAULT 2,
+    max_iterations INTEGER NOT NULL DEFAULT 3,
+    result_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    completed_at TEXT
+  )`,
+  `CREATE TABLE IF NOT EXISTS graph_nodes (
+    id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL REFERENCES graph_runs(id) ON DELETE CASCADE,
+    parent_id TEXT,
+    ordinal INTEGER NOT NULL,
+    type TEXT NOT NULL,
+    title TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'PENDING',
+    dependencies_json TEXT NOT NULL DEFAULT '[]',
+    assigned_agent TEXT,
+    session_id TEXT,
+    input_json TEXT NOT NULL DEFAULT '{}',
+    output_json TEXT NOT NULL DEFAULT '{}',
+    error TEXT,
+    retry_count INTEGER NOT NULL DEFAULT 0,
+    iteration INTEGER NOT NULL DEFAULT 0,
+    parallel_group TEXT,
+    evidence_json TEXT NOT NULL DEFAULT '[]',
+    evaluate_json TEXT NOT NULL DEFAULT '{}',
+    started_at TEXT,
+    completed_at TEXT,
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  )`,
+  "CREATE INDEX IF NOT EXISTS idx_graph_nodes_run ON graph_nodes(run_id)",
+  "CREATE INDEX IF NOT EXISTS idx_graph_runs_session ON graph_runs(session_key)",
+  "CREATE INDEX IF NOT EXISTS idx_graph_runs_status ON graph_runs(status)",
 ];
 
 export interface Migration {
@@ -974,6 +1017,54 @@ export const MIGRATIONS: readonly Migration[] = [
     from: 21,
     statements: [
       "ALTER TABLE initiatives ADD COLUMN required_review INTEGER NOT NULL DEFAULT 0",
+    ],
+  },
+  {
+    from: 22,
+    statements: [
+      `CREATE TABLE IF NOT EXISTS graph_runs (
+        id TEXT PRIMARY KEY,
+        session_key TEXT NOT NULL,
+        request TEXT NOT NULL,
+        goal TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'PLANNED',
+        planner TEXT NOT NULL DEFAULT 'rule',
+        project_id TEXT,
+        max_parallel INTEGER NOT NULL DEFAULT 2,
+        max_retries INTEGER NOT NULL DEFAULT 2,
+        max_iterations INTEGER NOT NULL DEFAULT 3,
+        result_json TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+        updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+        completed_at TEXT
+      )`,
+      `CREATE TABLE IF NOT EXISTS graph_nodes (
+        id TEXT PRIMARY KEY,
+        run_id TEXT NOT NULL REFERENCES graph_runs(id) ON DELETE CASCADE,
+        parent_id TEXT,
+        ordinal INTEGER NOT NULL,
+        type TEXT NOT NULL,
+        title TEXT NOT NULL,
+        description TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'PENDING',
+        dependencies_json TEXT NOT NULL DEFAULT '[]',
+        assigned_agent TEXT,
+        session_id TEXT,
+        input_json TEXT NOT NULL DEFAULT '{}',
+        output_json TEXT NOT NULL DEFAULT '{}',
+        error TEXT,
+        retry_count INTEGER NOT NULL DEFAULT 0,
+        iteration INTEGER NOT NULL DEFAULT 0,
+        parallel_group TEXT,
+        evidence_json TEXT NOT NULL DEFAULT '[]',
+        evaluate_json TEXT NOT NULL DEFAULT '{}',
+        started_at TEXT,
+        completed_at TEXT,
+        updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+      )`,
+      "CREATE INDEX IF NOT EXISTS idx_graph_nodes_run ON graph_nodes(run_id)",
+      "CREATE INDEX IF NOT EXISTS idx_graph_runs_session ON graph_runs(session_key)",
+      "CREATE INDEX IF NOT EXISTS idx_graph_runs_status ON graph_runs(status)",
     ],
   },
 ];

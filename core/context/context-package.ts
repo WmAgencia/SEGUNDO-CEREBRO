@@ -49,7 +49,7 @@ export interface ContextPackage {
 }
 
 export function buildContextPackage(
-  config: BrainConfig,
+  config: Pick<BrainConfig, "dbPath">,
   input: ContextPackageInput,
 ): ContextPackage {
   if (!input.task || input.task.trim() === "") {

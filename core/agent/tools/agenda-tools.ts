@@ -4,7 +4,7 @@
  * - agenda_list   → query events (READ)
  */
 
-import { ToolDefinition, ToolExecutionContext } from "./registry.js";
+import type { ToolDefinition, ToolExecutionContext } from "./registry.ts";
 
 export const agendaCreateTool: ToolDefinition = {
   id: "agenda_create",

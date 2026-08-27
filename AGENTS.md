@@ -156,6 +156,56 @@ na conta WmAgencia ou adicionar colaborador, depois `git push origin main`.
   Lições duras: instalador Ollama silencioso falha sem UAC e comeu o disco;
   huggingface.co serviu HTML (1.2GB!) para curl → usar hf-mirror.com;
   Set-Content -Encoding Ascii destrói acentos — sempre UTF8 sem BOM via .NET.
+- SINGLE AGENT APP (`apps/agent/`): ChatGPT-like frontend + API.
+  `core/agent/`: `single-agent.ts` (orquestrador conversacional: sessão →
+  contexto → LLM → ferramentas reais → approval gate → resposta),
+  `session-store.ts` (persistência real em manager_sessions/messages),
+  `context-compiler.ts` (contexto sob demanda, sem depender de env),
+  `tools/` (registry + executor + 19 ferramentas reais: brain_search,
+  memory_search/write, obsidian_sync, web_search/fetch, image_generate,
+  goal_create/list, whatsapp_send/status, opencode_run, agenda_create/list,
+  graph_plan/graph_execute/graph_status/graph_list/graph_recover).
+  Server: `apps/agent/server.ts` (http node puro, sem deps) serve o frontend
+  e `/api/*`. Vercel config em `vercel.json` aponta para `apps/agent/public`
+  + `apps/agent/server.ts`. Rodar: `npm run agent` (:3300).
+  Approval: ferramentas WRITE/DESTRUCTIVE exigem aprovação em banda
+  (`requestApproval`); o resume usa `preApproved` no executor. UI resolve
+  'sim'/'não' via chat.
+  ⚠️ Node `--experimental-strip-types` exige imports com extensão `.ts`
+  (nunca `.js`) e `import type` para tipos (senão ERRO de export em runtime);
+  vitest esconde isso (resolve .js→.ts), então smoke real: importar server.ts.
+  ⚠️ `.env.local` precisa de `SECOND_BRAIN_VAULT` e `SECOND_BRAIN_DATA_DIR`.
+  9 testes dedicados (`tests/single-agent.test.ts`); 399 no total.
+- FASE 3.5 concluída: Graph Orchestration (Single Agent → Orchestrator).
+  O Single Agent decide quando um trabalho é SIMPLE/TOOL/PLAN/GRAPH:
+  simples vai direto via ferramenta; complexo vira um DAG planeado.
+  `core/orchestration/`: `planner.ts` (modelos determinísticos de plano:
+  Audit→Identify→Arch→Implem→QA→Verify para rebuilds, Research→Design/
+  Arch (paralelo)→Implem→Integ→QA→Deploy para sistemas), `graph-store.ts`
+  (persiste runs+nós em `graph_runs`/`graph_nodes`, schema v23),
+  `graph-validator.ts` (ciclos, deps desconhecidas, self-dep, duplicatas),
+  `scheduler.ts` (readiness + paralelismo até `MAX_PARALLEL_NODES`=2 e
+  propagação de bloqueio), `evaluator.ts` (verdict PASS/FAIL por EVIDÊNCIA:
+  tool output presente, testes passando; nunca "LLM disse que terminou"),
+  `executor.ts` (roda tools e subagentes reais do OpenCode, rework até
+  `GRAPH_MAX_RETRIES`=2 com cap `GRAPH_MAX_ITERATIONS`=3),
+  `recovery.ts` (`detectStaleRuns`/`recoverStaleRuns`: runs PLANNED/RUNNING
+  sem update > 30min são marcados BLOCKED no startup; NUNCA auto-resume).
+  `limits.ts` (env: MAX_PARALLEL_NODES, GRAPH_MAX_RETRIES,
+  GRAPH_MAX_ITERATIONS, GRAPH_STALE_AFTER_MS, OPENCODE_TIMEOUT_MS).
+  `core/organization/`: `entity-dedup.ts` (resolveOrCreateEntity: SEARCH
+  existente id→alias→nome→prefixo→FTS conf≥0.7, senão CREATE com stable id
+  `type.slug`; impossível duplicar entidade), `vault-audit.ts` (auditoria
+  READ-ONLY: duplicatas, vazios, órfãos, links quebrados, sem classificação).
+  5 subagentes reais declarados como markdown em `.opencode/agents/`
+  (researcher/read-only, developer/escrita real, qa/testes, explorer,
+  reviewer/revisão) invocados via `opencode run --agent <id>` com timeout.
+  5 ferramentas de Graph expostas ao Single Agent (`graph-tools.ts`);
+  `graph_execute` é HIGH risk → passa pelo Approval Gate.
+  CLI: `brain audit`, `brain graph --list|--status <id>|--recover`.
+  Observabilidade: transições registradas em `events` (event_type=graph_node);
+  `graph_status` responde "o que está sendo feito e por quê".
+  Docs: `docs/GRAPH_ORCHESTRATION.md`. 448 testes; typecheck limpo.
 - Stack: Node 24 + node:sqlite + FTS5 + TypeScript + commander + yaml +
   @modelcontextprotocol/sdk + zod + vitest + llama.cpp/Qwen3 local.
 - Vault real inicializado e indexado:
@@ -164,6 +214,7 @@ na conta WmAgencia ou adicionar colaborador, depois `git push origin main`.
 
 ## Próxima fase
 
-FASE 8 encerrada = V1 COMPLETA (fases 0–8). Roadmap futuro (pós-V1, quando
-houver necessidade real): sync do vault via git, MCP over HTTP p/ acesso
-remoto, dashboard do grafo. Manter disco monitorado (<1 GB livre hoje).
+Graph Orchestration (FASE 3.5) encerrada. Próximas (quando houver necessidade
+real): execução autônoma aprovada do Single Agent sobre o vault com evidência,
+agregação de subagentes via CLI `opencode run`, health do gráfico em produção.
+Manter disco monitorado (<1 GB livre hoje).

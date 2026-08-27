@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Second Brain</title>
+<link rel="stylesheet" href="/style.css"/>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar" id="sidebar">
+    <div class="sb-scroll">
+      <button class="btn-new" id="btn-new">
+        <span class="icon-plus">+</span> Novo chat
+      </button>
+      <div class="sb-item" data-view="commands"><span class="sb-ico">⌘</span> Comandos</div>
+      <div class="sb-item" data-view="images"><span class="sb-ico">🖼</span> Imagens</div>
+      <div class="sb-item" data-view="agenda"><span class="sb-ico">📅</span> Agenda</div>
+      <div class="sb-item" data-view="connections"><span class="sb-ico">🔌</span> Conexões</div>
+      <div class="sb-item" data-view="routing"><span class="sb-ico">🧭</span> Routing</div>
+
+      <div class="sb-section-title">Conversas</div>
+      <div id="session-list" class="session-list"></div>
+    </div>
+    <div class="sb-footer">
+      <button class="collapse-btn" id="btn-collapse">«</button>
+    </div>
+  </aside>
+
+  <main class="main" id="main">
+    <!-- CHAT VIEW -->
+    <section class="view chat-view" id="view-chat">
+      <header class="chat-head"><span id="chat-title">Second Brain</span></header>
+      <div class="messages" id="messages">
+        <div class="msg agent">
+          <div class="avatar">SB</div>
+          <div class="bubble"><p>Olá. Como posso ajudar?</p></div>
+        </div>
+      </div>
+      <div class="composer">
+        <textarea id="input" rows="1" placeholder="Digite uma mensagem… (Enter envia, Shift+Enter nova linha)"></textarea>
+        <button id="btn-send" title="Enviar"><span class="send-ico">↑</span></button>
+      </div>
+    </section>
+
+    <!-- IMAGES VIEW -->
+    <section class="view hidden" id="view-images">
+      <header class="panel-head"><h1>Imagens</h1></header>
+      <div id="images-grid" class="grid"><p class="muted">Nenhuma imagem gerada ainda.</p></div>
+    </section>
+
+    <!-- AGENDA VIEW -->
+    <section class="view hidden" id="view-agenda">
+      <header class="panel-head"><h1>Agenda</h1></header>
+      <div id="agenda-list" class="list"><p class="muted">Carregando…</p></div>
+    </section>
+
+    <!-- CONNECTIONS VIEW -->
+    <section class="view hidden" id="view-connections">
+      <header class="panel-head"><h1>Conexões</h1></header>
+      <div class="conn-card">
+        <div class="conn-title"><span>WhatsApp</span><span class="badge" id="wa-badge">…</span></div>
+        <p class="muted">Estado atual da instância Evolution.</p>
+        <div id="wa-detail" class="muted">Consultando…</div>
+      </div>
+    </section>
+
+    <!-- ROUTING VIEW -->
+    <section class="view hidden" id="view-routing">
+      <header class="panel-head"><h1>Routing</h1></header>
+      <div id="routing-detail" class="list"><p class="muted">Carregando…</p></div>
+    </section>
+  </main>
+</div>
+
+<div class="typing hidden" id="typing"><span></span><span></span><span></span></div>
+<div class="toast hidden" id="toast"></div>
+
+<script src="/app.js"></script>
+</body>
+</html>

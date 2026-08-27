@@ -11,8 +11,9 @@
  */
 
 import { DatabaseSync } from "node:sqlite";
-import { ToolRegistry, ToolExecutionContext } from "./registry.js";
-import { ToolResult } from "../types.js";
+import { ToolRegistry } from "./registry.ts";
+import type { ToolExecutionContext } from "./registry.ts";
+import type { ToolResult } from "../types.ts";
 
 export interface ExecutedTool extends ToolResult<unknown> {
   toolId: string;
@@ -27,6 +28,8 @@ export interface ExecuteOptions {
   ctx: ToolExecutionContext;
   approvalPolicy?: "auto" | "always";
   sessionId?: string;
+  /** True when the human already approved this exact call (resume flow). */
+  preApproved?: boolean;
 }
 
 function validateInput(toolId: string, input: Record<string, unknown>, schema: { required?: string[] }): void {
@@ -60,7 +63,7 @@ export class ToolExecutor {
 
     // ── APPROVAL GATE ──
     const requiresApproval = options.approvalPolicy === "always" || tool.requiresApproval;
-    if (requiresApproval) {
+    if (requiresApproval && !options.preApproved) {
       const requestApproval = options.ctx.userContext?.requestApproval;
       if (!requestApproval) {
         return { success: false, toolId: tool.id, error: `approval required for ${tool.id} but no approval channel available`, output: null, latencyMs: Date.now() - started, provenance: tool.provenance, approved: false };

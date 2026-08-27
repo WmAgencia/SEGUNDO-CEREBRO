@@ -40,6 +40,9 @@ import {
   applySchema,
   getMetadata,
 } from "../../../storage/connection.ts";
+import { auditVault, auditExplanation } from "../../../core/organization/vault-audit.ts";
+import type { BrainConfig } from "../../../core/config/loader.ts";
+import { recoverStaleRuns } from "../../../core/orchestration/recovery.ts";
 
 const log = createLogger("cli");
 
@@ -902,6 +905,50 @@ program
   });
 
 program.command("stats").description("mostra contagens do índice").action(printStats);
+
+program
+  .command("audit")
+  .description("auditoria read-only do vault: duplicatas, vazios, órfãos, links quebrados e sem classificação")
+  .action(() => {
+    const config = loadConfigOrExit();
+    const report = auditVault(config);
+    process.stdout.write(auditExplanation(report) + "\n");
+    if (!report.ok) {
+      process.exit(1);
+    }
+  });
+
+program
+  .command("graph")
+  .description("gerenciamento de Graphs: list, status, recover")
+  .option("--list", "lista runs da sessão atual")
+  .option("--status <runId>", "status de um run específico")
+  .option("--recover", "recupera runs stale (stale → BLOCKED)")
+  .action((opts: { list?: boolean; status?: string; recover?: boolean }) => {
+    const config = loadConfigOrExit();
+    const db = openDatabase(config.dbPath);
+    try {
+      applySchema(db);
+      if (opts.list) {
+        const runs = db.prepare("SELECT id, status, goal FROM graph_runs ORDER BY updated_at DESC LIMIT 20").all() as Array<{ id: string; status: string; goal: string }>;
+        const output = runs.length ? runs.map((r) => `- ${r.id} [${r.status}] "${r.goal.slice(0, 80)}"`).join("\n") : "nenhum run nesta sessão";
+        process.stdout.write(output + "\n");
+      } else if (opts.status) {
+        const run = db.prepare("SELECT id, status, goal, result_json FROM graph_runs WHERE id = ?").get(opts.status) as Record<string, unknown> | undefined;
+        if (!run) { process.stderr.write(`run not found: ${opts.status}\n`); process.exit(1); return; }
+        const nodes = db.prepare("SELECT title, status, error, retry_count FROM graph_nodes WHERE run_id = ? ORDER BY ordinal ASC").all(opts.status) as Array<{ title: string; status: string; error: string; retry_count: number }>;
+        const per = nodes.map((n) => `  ${n.title} [${n.status}]${n.error ? ` — ${n.error.slice(0, 140)}` : ""}`).join("\n") || "(sem nós)";
+        process.stdout.write(`Run: ${run.status ?? "?"}\n${per}\n`);
+      } else if (opts.recover) {
+        const recovered = recoverStaleRuns(config);
+        if (!recovered.length) { process.stdout.write("nenhum run stale\n"); return; }
+        const lines = recovered.map((r) => `- ${r.runId}: ${r.reason}`).join("\n");
+        process.stdout.write(lines + "\n");
+      } else {
+        process.stdout.write("Use --list, --status <id>, ou --recover\n");
+      }
+    } finally { db.close(); }
+  });
 
 program
   .command("personal-context <phone>")

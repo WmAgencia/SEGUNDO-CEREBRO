@@ -5,7 +5,7 @@
  * - opencode_run  → OpenCodeRuntime (core/factory/opencode-runtime.ts) [EXECUTE, approval]
  */
 
-import { ToolDefinition, ToolExecutionContext } from "./registry.js";
+import type { ToolDefinition, ToolExecutionContext } from "./registry.ts";
 
 export const whatsappSendTool: ToolDefinition = {
   id: "whatsapp_send",

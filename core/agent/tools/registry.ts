@@ -5,7 +5,7 @@
  * No mocks: tools without a real backend are registered as unavailable.
  */
 
-import { Permission, RiskLevel, SideEffect, ToolResult } from "../types.js";
+import type { Permission, RiskLevel, SideEffect, ToolResult } from "../types.ts";
 import type { BrainConfig } from "../../config/loader.ts";
 
 export interface ToolSchema {

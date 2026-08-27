@@ -4,8 +4,8 @@
  */
 
 import { DatabaseSync } from "node:sqlite";
-import { AgentState, ManagerIntent, ChatResponse, UserInput, BrainConfig, Plan } from "./types.js";
-import { compileContext } from "./context-compiler.js";
+import type { AgentState, ManagerIntent, ChatResponse, UserInput, BrainConfig, Plan } from "./types.ts";
+import { compileContext } from "./context-compiler.ts";
 
 // Mock implementations - will be replaced with actual logic
 export async function chatEngine(
@@ -43,7 +43,7 @@ export async function chatEngine(
     
     // 6. Handle creative intents (idea, proposal)
     if (intent === 'IDEA' || intent === 'QUESTION') {
-      const context = await compileContext({ subject: input }, config.dbPath);
+      const context = await compileContext({ subject: input }, config);
       const response = await callLLM(config, context, input, session);
       return { ...response, intent };
     }
@@ -67,7 +67,7 @@ export async function chatEngine(
     }
     
     // 9. Default: conversa normal com contexto
-    const context = await compileContext({ subject: input }, config.dbPath);
+    const context = await compileContext({ subject: input }, config);
     const response = await callLLM(config, context, input, session);
     return { ...response, intent: 'CHAT' };
   } finally {
