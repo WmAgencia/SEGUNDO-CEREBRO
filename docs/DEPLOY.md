@@ -1,10 +1,14 @@
 # Deploy — Second Brain OS
 
+> FASE 3.7: a aplicação principal é o **chat ChatGPT-like** (`apps/agent`).
+> O HQ antigo (`apps/hq`) permanece no repositório apenas como ferramenta
+> local (`npm run hq`); NÃO é mais servido em produção.
+
 ## Arquitetura
 
 ```
 VERCEL (frontend estático)          RAILWAY / VPS (runtime persistente)
-apps/hq/public                      apps/hq/server.ts + core/ + storage/
+apps/agent/public                   apps/agent/server.ts + core/ + storage/
          │                                  │
          │  HTTPS (CORS habilitado)        │
          └────────── API calls ────────────┘
@@ -19,8 +23,8 @@ apps/hq/public                      apps/hq/server.ts + core/ + storage/
 
 | Componente | Vercel | Railway/VPS | Local dev |
 |---|---|---|---|
-| Frontend HQ | ✅ estático | — | ✅ |
-| HQ API (`/api/hq/*`) | ❌ | ✅ Dockerfile | ✅ `npm run hq` |
+| Frontend ChatGPT-like | ✅ estático | — | ✅ |
+| Agent API (`/api/*`) | ❌ | ✅ Dockerfile | ✅ `npm run agent` |
 | SQLite (`brain.db`) | ❌ efêmero | ✅ volume | ✅ ficheiro local |
 | OpenCode Runtime | ❌ serverless | ✅ no container | ✅ global install |
 | SSE events | ❌ conexão longa | ✅ | ✅ |
@@ -43,10 +47,9 @@ railway link
 No dashboard Railway → Variables:
 
 ```env
-HQ_HOST=0.0.0.0
-HQ_PORT=3200
+AGENT_PORT=3300
 SECOND_BRAIN_VAULT=/data/vault
-HQ_CORS_ORIGINS=https://segundo-cerebro-git-main-consecom.vercel.app,https://segundo-cerebro-consecom.vercel.app
+SECOND_BRAIN_DATA_DIR=/data
 ```
 
 Opcional:
@@ -55,10 +58,8 @@ Opcional:
 EVOLUTION_API_URL=...
 EVOLUTION_API_KEY=...
 EVOLUTION_INSTANCE=SECOM
-OWNER_WHATSAPP=5515981817336
-SECOND_BRAIN_OPERATIONS_GROUP=120363427273069174@g.us
-SECOND_BRAIN_EXTERNAL_AI_URL=...
-SECOND_BRAIN_EXTERNAL_AI_KEY=...
+GROQ_API_KEY_1=...
+OPENROUTER_API_KEY=...
 ```
 
 ### 3. Adicionar volume persistente para o banco
@@ -69,48 +70,55 @@ Dashboard → Service → Volumes:
 
 ### 4. Deploy
 
-```bash
-railway up
-```
-
-O `Dockerfile` instala Node 24, copia `core/`, `storage/`, `config/` e
-`apps/hq/`, instala dependências e inicia o servidor na porta 3200.
+O backend inicia com `node --experimental-strip-types apps/agent/server.ts`
+(Node 24). O servidor exporta `createAgentServer()` e recupera runs stale no
+boot (`recoverAtStartup`).
 
 ### 5. Configurar CORS
 
-Adicionar a URL do frontend Vercel em `HQ_CORS_ORIGINS`.
-Por padrão é `*` (aceita tudo) — restringir em produção.
+O server já envia `Access-Control-Allow-Origin: *`; restringir em produção.
 
 ---
 
 ## Deploy Frontend (Vercel)
 
-1. Root Directory: `apps/hq`
-2. Framework: None (static)
-3. Build command: vazio (estático)
-4. Output directory: `public`
+O `vercel.json` da raiz define:
 
-Após o backend estar no ar, editar `apps/hq/public/config.js`:
-
-```js
-window.HQ_API_URL = "https://teu-projeto.up.railway.app";
+```json
+{
+  "framework": null,
+  "buildCommand": null,
+  "outputDirectory": "apps/agent/public",
+  "cleanUrls": true
+}
 ```
 
-Ou usar uma env var da Vercel que substitua esse arquivo no build.
+Deploy: `vercel --prod` (ou push em `main` com git integration).
+
+Após o backend estar no ar, editar `apps/agent/public/config.js`:
+
+```js
+window.SECOND_BRAIN_API = "https://teu-projeto.up.railway.app";
+```
+
+Sem backend configurado, o frontend tenta a mesma origem (dev local com
+`npm run agent`).
 
 ---
 
 ## Segurança antes de expor publicamente
 
-- [ ] Autenticação no HQ server (hoje aberto).
+- [ ] Autenticação no agent server (hoje aberto).
 - [ ] TLS obrigatório (Railway fornece automaticamente).
-- [ ] Rate limit no `/api/hq/command`.
-- [ ] Restringir `HQ_CORS_ORIGINS` aos domínios exatos.
+- [ ] Rate limit nos endpoints de chat.
+- [ ] Restringir CORS aos domínios exatos.
 - [ ] Nunca commitar `.env.local`.
+- [x] Routing nunca expõe chaves completas (máscara ••••1234).
 
 ---
 
 ## Status atual
 
-Backend: `READY TO DEPLOY` (Dockerfile + railway.json criados, não deployado).
-Frontend: `DEPLOYED` na Vercel mas mostra OFFLINE até o backend estar acessível.
+Backend: `READY TO DEPLOY` (não deployado; local-first hoje).
+Frontend: `DEPLOYED` na Vercel (interface ChatGPT-like; APIs em modo
+degradado até backend acessível).

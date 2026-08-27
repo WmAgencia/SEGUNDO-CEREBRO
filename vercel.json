@@ -1,4 +1,7 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "outputDirectory": "apps/hq/public"
+  "framework": null,
+  "buildCommand": null,
+  "outputDirectory": "apps/agent/public",
+  "cleanUrls": true
 }

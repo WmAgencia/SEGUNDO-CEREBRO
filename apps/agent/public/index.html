@@ -1,88 +1,135 @@
-<!doctype html>
-<html lang="pt-BR">
+<!DOCTYPE html>
+<html lang="pt-BR" data-theme="system">
 <head>
-<meta charset="UTF-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>Second Brain</title>
 <link rel="stylesheet" href="/style.css"/>
 </head>
 <body>
 <div class="app">
+  <!-- SIDEBAR -->
   <aside class="sidebar" id="sidebar">
-    <div class="sb-scroll">
-      <button class="btn-new" id="btn-new">
-        <span class="icon-plus">+</span> Novo chat
-      </button>
-      <div class="sb-item" data-view="commands"><span class="sb-ico">⌘</span> Comandos</div>
-      <div class="sb-item" data-view="images"><span class="sb-ico">🖼</span> Imagens</div>
-      <div class="sb-item" data-view="agenda"><span class="sb-ico">📅</span> Agenda</div>
-      <div class="sb-item" data-view="connections"><span class="sb-ico">🔌</span> Conexões</div>
-      <div class="sb-item" data-view="routing"><span class="sb-ico">🧭</span> Routing</div>
-      <div class="sb-item" data-view="graphs"><span class="sb-ico">🔀</span> Graphs</div>
-
-      <div class="sb-section-title">Conversas</div>
-      <div id="session-list" class="session-list"></div>
+    <div class="sb-head">
+      <button class="btn-new-chat" id="btn-new-chat"><span class="icon-plus">+</span> Novo chat</button>
+      <button class="collapse-btn" id="btn-collapse" title="Recolher">«</button>
     </div>
+
+    <div class="sb-section-title">Conversas</div>
+    <div id="session-list" class="session-list"></div>
+
+    <div class="sb-nav">
+      <div class="sb-item" data-view="graphs" title="Graphs em execução"><span class="sb-ico">⬡</span> Graphs</div>
+      <div class="sb-item" data-view="images" title="Imagens geradas"><span class="sb-ico">🖼</span> Imagens</div>
+      <div class="sb-item" data-view="agenda" title="Agenda"><span class="sb-ico">📅</span> Agenda</div>
+      <div class="sb-item" data-view="connections" title="Conexões"><span class="sb-ico">🔌</span> Conexões</div>
+      <div class="sb-item" data-view="routing" title="Routing de modelos"><span class="sb-ico">🧭</span> Routing</div>
+    </div>
+
     <div class="sb-footer">
-      <button class="collapse-btn" id="btn-collapse">«</button>
+      <button class="btn-ghost" id="btn-theme" title="Alternar tema"><span id="theme-ico">◐</span> Tema</button>
+      <div class="sb-profile" title="Second Brain — Single Agent">
+        <div class="avatar-mini">SB</div>
+        <span>Second Brain</span>
+      </div>
     </div>
   </aside>
+  <div class="sidebar-backdrop hidden" id="sidebar-backdrop"></div>
 
+  <!-- MAIN -->
   <main class="main" id="main">
-    <!-- CHAT VIEW -->
+
+    <!-- CHAT (a aplicação principal) -->
     <section class="view chat-view" id="view-chat">
-      <header class="chat-head"><span id="chat-title">Second Brain</span></header>
+      <header class="chat-head">
+        <button class="menu-btn" id="btn-menu" title="Menu">☰</button>
+        <span id="chat-title">Second Brain</span>
+        <span class="head-spacer"></span>
+        <span class="badge hidden" id="graph-badge" title="Graph em execução">⬡ graph</span>
+      </header>
+
       <div class="messages" id="messages">
-        <div class="msg agent">
-          <div class="avatar">SB</div>
-          <div class="bubble"><p>Olá. Como posso ajudar?</p></div>
+        <div class="empty-hero" id="empty-hero">
+          <div class="hero-logo">SB</div>
+          <h1>Como posso ajudar?</h1>
+          <p>Converse com o Second Brain: contexto, objetivos, ferramentas e Graphs de execução.</p>
+          <div class="hero-hints">
+            <button class="hint-chip" data-hint="Qual é meu objetivo atual?">Qual é meu objetivo atual?</button>
+            <button class="hint-chip" data-hint="Quero conversar sobre prospecção.">Prospecção</button>
+            <button class="hint-chip" data-hint="Como está o WhatsApp?">Status do WhatsApp</button>
+          </div>
         </div>
       </div>
-      <div class="composer">
-        <textarea id="input" rows="1" placeholder="Digite uma mensagem… (Enter envia, Shift+Enter nova linha)"></textarea>
-        <button id="btn-send" title="Enviar"><span class="send-ico">↑</span></button>
+
+      <div class="composer-wrap">
+        <div class="composer" id="composer">
+          <button class="composer-btn" id="btn-attach" title="Anexar arquivo">📎</button>
+          <input type="file" id="file-input" class="hidden" accept="image/*,.pdf,.txt,.md"/>
+          <textarea id="input" rows="1" placeholder="Mensagem para o Second Brain…"></textarea>
+          <button class="composer-btn" id="btn-voice" title="Ditar (reconhecimento de voz)">🎤</button>
+          <button class="composer-btn send" id="btn-send" title="Enviar">↑</button>
+        </div>
+        <div class="composer-hint">O Second Brain usa ferramentas e Graphs reais. Confirme ações de risco quando solicitado.</div>
       </div>
     </section>
 
-    <!-- IMAGES VIEW -->
+    <!-- GRAPHS -->
+    <section class="view hidden" id="view-graphs">
+      <header class="panel-head"><h1>Graphs</h1><p class="muted">Execuções multi-etapas do Single Agent (DAG real: nós, dependências, evidência).</p></header>
+      <div id="graphs-list" class="list"><p class="muted">Carregando…</p></div>
+    </section>
+
+    <!-- IMAGES -->
     <section class="view hidden" id="view-images">
-      <header class="panel-head"><h1>Imagens</h1></header>
+      <header class="panel-head"><h1>Imagens</h1><p class="muted">Geradas pela ferramenta image_generate — peça no chat: "gere uma imagem de …".</p></header>
       <div id="images-grid" class="grid"><p class="muted">Nenhuma imagem gerada ainda.</p></div>
     </section>
 
-    <!-- AGENDA VIEW -->
+    <!-- AGENDA -->
     <section class="view hidden" id="view-agenda">
-      <header class="panel-head"><h1>Agenda</h1></header>
+      <header class="panel-head"><h1>Agenda</h1><p class="muted">Eventos reais (agenda_events). O agente também cria pelo chat.</p></header>
+      <form class="agenda-form" id="agenda-form">
+        <input type="text" id="agenda-title" placeholder="Título (ex.: reunião de prospecção)" required/>
+        <input type="datetime-local" id="agenda-when" required/>
+        <button type="submit" class="btn-primary">Adicionar</button>
+      </form>
       <div id="agenda-list" class="list"><p class="muted">Carregando…</p></div>
     </section>
 
-    <!-- CONNECTIONS VIEW -->
+    <!-- CONNECTIONS -->
     <section class="view hidden" id="view-connections">
-      <header class="panel-head"><h1>Conexões</h1></header>
+      <header class="panel-head"><h1>Conexões</h1><p class="muted">Integrações reais. Estados nunca inventados.</p></header>
       <div class="conn-card">
-        <div class="conn-title"><span>WhatsApp</span><span class="badge" id="wa-badge">…</span></div>
-        <p class="muted">Estado atual da instância Evolution.</p>
+        <div class="conn-title"><span>WhatsApp 1 (Evolution)</span><span class="badge" id="wa-badge">…</span></div>
         <div id="wa-detail" class="muted">Consultando…</div>
+        <div class="conn-actions">
+          <button class="btn-primary" id="wa-connect">Conectar</button>
+          <label class="switch-row" title="Desativar IA não desconecta o WhatsApp; apenas impede respostas automáticas.">
+            <input type="checkbox" id="wa-ai-toggle" checked/>
+            <span>IA respondendo automaticamente</span>
+          </label>
+        </div>
+        <div class="qr-wrap hidden" id="wa-qr-wrap">
+          <p class="muted">Escaneie o QR Code com o WhatsApp do número dono da instância:</p>
+          <img id="wa-qr" alt="QR Code do WhatsApp" class="qr-img"/>
+          <p class="muted" id="wa-qr-status">Aguardando conexão…</p>
+        </div>
       </div>
     </section>
 
-    <!-- ROUTING VIEW -->
+    <!-- ROUTING -->
     <section class="view hidden" id="view-routing">
-      <header class="panel-head"><h1>Routing</h1></header>
+      <header class="panel-head"><h1>Routing</h1><p class="muted">Providers e modelos. Chaves mascaradas — credenciais ficam no ambiente.</p></header>
       <div id="routing-detail" class="list"><p class="muted">Carregando…</p></div>
     </section>
 
-    <!-- GRAPHS VIEW (painel discreto) -->
-    <section class="view hidden" id="view-graphs">
-      <header class="panel-head"><h1>Graphs</h1></header>
-      <div id="graphs-list" class="list"><p class="muted">Carregando…</p></div>
-    </section>
   </main>
 </div>
 
 <div class="typing hidden" id="typing"><span></span><span></span><span></span></div>
 <div class="toast hidden" id="toast"></div>
 
+<script src="/config.js"></script>
 <script src="/app.js"></script>
 </body>
 </html>

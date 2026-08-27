@@ -219,7 +219,24 @@ na conta WmAgencia ou adicionar colaborador, depois `git push origin main`.
   real; `graph_execute` persiste outcome, suporta `resume` e propaga
   requestApproval; painel discreto "Graphs" no app (`GET /api/graphs`).
   Docs: `docs/GRAPH_E2E_REPORT.md`. 16 testes E2E novos (TESTE 1–10 + web real +
-  evaluator + gate) → 464 testes; typecheck limpo. Push bloqueado por credencial.
+  evaluator + gate) → 464 testes; typecheck limpo. Push em `origin/main` ok
+  (credencial GitHub resolvida nesta máquina).
+- FASE 3.7 concluída: Frontend final ChatGPT-like (HQ substituído).
+  `apps/agent/` é a ÚNICA aplicação principal: sidebar (Novo chat + sessões reais
+  com renomear/excluir, Graphs, Imagens, Agenda, Conexões, Routing), conversa no
+  centro, composer com anexar/voz/enviar, tema claro/escuro/sistema, responsivo
+  (drawer mobile). Streaming real via SSE (`GET /api/chat/session/:key/stream`)
+  com eventos reais do turno (context_compiled/thinking/tool_start/tool_result/
+  approval) — `SingleAgent.chat` ganhou `onEvent`. Graph cards dentro do chat
+  (polling `/api/graphs/:runId`: nós, dependências, retries, evidência, eventos).
+  Tool cards amigáveis por ferramenta. Conexões: QR Code real da Evolution
+  (`connectInstance` create/connect), toggle "IA respondendo" que NÃO desconecta
+  (`app_settings`, schema v24). Routing com chaves mascaradas (••••1234).
+  Sessões: rename/delete/preview no `session-store`. Server exporta
+  `createAgentServer()` p/ testes. `vercel.json` raiz agora serve
+  `apps/agent/public` (HQ sai da produção; permanece no git como ferramenta
+  local via `npm run hq`). 12 testes E2E de interface (HTTP real) → 476 testes.
+  Docs: `docs/PHASE_3_7_FRONTEND_REPORT.md`. Deploy Vercel validado.
 - Stack: Node 24 + node:sqlite + FTS5 + TypeScript + commander + yaml +
   @modelcontextprotocol/sdk + zod + vitest + llama.cpp/Qwen3 local.
 - Vault real inicializado e indexado:
@@ -228,8 +245,8 @@ na conta WmAgencia ou adicionar colaborador, depois `git push origin main`.
 
 ## Próxima fase
 
-Graph Orchestration (FASE 3.6) encerrada: execução real comprovada por E2E.
-Próximas (quando houver necessidade real): habilitar chave de provider
-(Groq/OpenRouter) para rodar subagentes OpenCode reais no graph; resolver
-credencial push (`git credential-manager github login`); health/observabilidade
-do gráfico em produção. Manter disco monitorado (<1 GB livre hoje).
+Frontend final (FASE 3.7) encerrado: Second Brain = chat de IA pessoal
+(Single Agent + Graph Orchestration por trás). Próximas (quando houver
+necessidade real): backend persistente fora da máquina (Railway/VPS com volume
+p/ brain.db + vault), streaming por tokens do provider, autenticação leve.
+Manter disco monitorado (<1 GB livre hoje).

@@ -1,4 +1,4 @@
-export const SCHEMA_VERSION = 23;
+export const SCHEMA_VERSION = 24;
 
 export interface Migration {
   from: number;
@@ -810,6 +810,11 @@ export const SCHEMA_STATEMENTS: readonly string[] = [
   "CREATE INDEX IF NOT EXISTS idx_graph_nodes_run ON graph_nodes(run_id)",
   "CREATE INDEX IF NOT EXISTS idx_graph_runs_session ON graph_runs(session_key)",
   "CREATE INDEX IF NOT EXISTS idx_graph_runs_status ON graph_runs(status)",
+  `CREATE TABLE IF NOT EXISTS app_settings (
+    key        TEXT PRIMARY KEY,
+    value      TEXT NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  )`,
 ];
 
 export interface Migration {
@@ -1065,6 +1070,16 @@ export const MIGRATIONS: readonly Migration[] = [
       "CREATE INDEX IF NOT EXISTS idx_graph_nodes_run ON graph_nodes(run_id)",
       "CREATE INDEX IF NOT EXISTS idx_graph_runs_session ON graph_runs(session_key)",
       "CREATE INDEX IF NOT EXISTS idx_graph_runs_status ON graph_runs(status)",
+    ],
+  },
+  {
+    from: 23,
+    statements: [
+      `CREATE TABLE IF NOT EXISTS app_settings (
+        key        TEXT PRIMARY KEY,
+        value      TEXT NOT NULL,
+        updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+      )`,
     ],
   },
 ];

@@ -78,3 +78,45 @@ export async function isAvailable(): Promise<boolean> {
   const state = await getConnectionState();
   return state === "open";
 }
+
+export interface ConnectResult {
+  state: string;
+  qrBase64: string | null;
+  pairingCode: string | null;
+  error: string | null;
+}
+
+/**
+ * FASE 3.7 — conexão real via Evolution: consulta a instância; se não existir,
+ * cria; pede o QR code (base64) para pareamento. Nunca inventa estado: se a
+ * Evolution API não estiver configurada, retorna estado honesto.
+ */
+export async function connectInstance(): Promise<ConnectResult> {
+  if (!API_KEY() || !BASE_URL()) {
+    return { state: "unconfigured", qrBase64: null, pairingCode: null, error: "EVOLUTION_API_URL/EVOLUTION_API_KEY ausentes" };
+  }
+  const name = INSTANCE();
+  try {
+    const instances = await evoRequest<Array<{ name: string; connectionStatus: string }>>("GET", "/instance/fetchInstances");
+    const existing = instances.find((i) => i.name === name);
+    if (existing?.connectionStatus === "open") {
+      return { state: "open", qrBase64: null, pairingCode: null, error: null };
+    }
+    if (!existing) {
+      await evoRequest("POST", "/instance/create", {
+        instanceName: name,
+        qrcode: true,
+        integration: "WHATSAPP-BAILEYS",
+      });
+    }
+    const connect = await evoRequest<{ base64?: string; code?: string; pairingCode?: string }>("GET", `/instance/connect/${name}`);
+    return {
+      state: "qrcode",
+      qrBase64: connect.base64 ?? null,
+      pairingCode: connect.pairingCode ?? connect.code ?? null,
+      error: null,
+    };
+  } catch (err) {
+    return { state: "error", qrBase64: null, pairingCode: null, error: err instanceof Error ? err.message.slice(0, 300) : String(err) };
+  }
+}

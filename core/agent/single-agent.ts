@@ -22,6 +22,17 @@ export interface ChatMessage {
   content: string;
 }
 
+/** Real lifecycle events emitted while a turn runs (FASE 3.7 streaming). */
+export interface AgentEvent {
+  type: "context_compiled" | "thinking" | "tool_start" | "tool_result" | "approval_requested" | "answer";
+  toolId?: string;
+  success?: boolean;
+  graph?: boolean;
+  detail?: string;
+}
+
+export type AgentEventListener = (evt: AgentEvent) => void;
+
 export interface ChatTurnResult {
   message?: ChatMessage;
   type: "answer" | "approval_requested" | "error";
@@ -105,8 +116,10 @@ export class SingleAgent {
     opts: {
       llm?: (m: ChatMessage[]) => Promise<{ content: string }>;
       resumeApproval?: { toolId: string; input: Record<string, unknown> } | null;
+      onEvent?: AgentEventListener;
     } = {},
   ): Promise<ChatTurnResult> {
+    const emit = opts.onEvent ?? (() => {});
     const persistUser = (await import("./session-store.ts")).persistMessage;
     const appendUser = userText.trim();
     if (!appendUser && !opts.resumeApproval) return { type: "error" };
@@ -121,6 +134,7 @@ export class SingleAgent {
 
     // 1. compile context (deterministic)
     const cctx = await (await import("./context-compiler.ts")).compileContext({ subject: appendUser || "continuar trabalho" }, config);
+    emit({ type: "context_compiled", detail: `contexto compilado (${cctx.charBudget.used}/${cctx.charBudget.max} chars)` });
     contextNote = `\n\n--- CONTEXTO DO SECOND BRAIN (${cctx.charBudget.used}/${cctx.charBudget.max} chars) ---\n${cctx.summary ?? "sem contexto específico"}\n${cctx.documents.length ? "\nNotas relevantes: " + cctx.documents.slice(0, 4).map((d) => `[${d.path}] ${d.title}`).join("; ") : ""}\n${cctx.recentEvents.length ? "\nEventos recentes: " + cctx.recentEvents.slice(0, 3).map((e) => e.title).join("; ") : ""}\n--- FIM DO CONTEXTO ---\n\n--- FERRAMENTAS DISPONÍVEIS ---\n${toolList}\n--- FIM DAS FERRAMENTAS ---`;
 
     const llm = opts.llm ?? this.llm;
@@ -154,6 +168,7 @@ export class SingleAgent {
 
       let answer: string;
       try {
+        emit({ type: "thinking", detail: "consultando o modelo" });
         const res = await llm(messages);
         answer = res.content ?? "";
       } catch (error) {
@@ -169,6 +184,7 @@ export class SingleAgent {
       if (!toolReq) {
         // final textual answer
         const clean = answer.trim();
+        emit({ type: "answer" });
         persistUser(config, sessionKey, "assistant", clean);
         // persist memory (best effort, only if it looks like a fact/decision/idea)
         await persistTurnMemory(config, sessionKey, userText, clean);
@@ -181,13 +197,16 @@ export class SingleAgent {
         toolResults.push({ toolId, success: false, error: "ferramenta não registrada" });
         continue;
       }
+      emit({ type: "tool_start", toolId, graph: toolId.startsWith("graph_") });
       const approvedTool = await this.executor.execute({
         toolId,
         input: toolReq.input ?? {},
         ctx: { config, sessionId: sessionKey, userContext: requestApproval ? { requestApproval } : undefined },
       });
+      emit({ type: "tool_result", toolId, success: approvedTool.success, graph: toolId.startsWith("graph_") });
       toolResults.push({ toolId: approvedTool.toolId, success: approvedTool.success, error: approvedTool.error });
       if (!approvedTool.success && approvedTool.error?.toLowerCase().includes("approval")) {
+        emit({ type: "approval_requested", toolId });
         return { type: "approval_requested", approval: { toolId, input: toolReq.input ?? {} }, toolResults };
       }
       // loop continues: appends tool result to context for next LLM call

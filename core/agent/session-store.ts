@@ -75,3 +75,57 @@ export function getMessages(config: BrainConfig, sessionKey: string, limit = 50)
     db.close();
   }
 }
+
+export function renameSession(config: BrainConfig, sessionKey: string, title: string): void {
+  const db = new DatabaseSync(config.dbPath);
+  try {
+    db.prepare("UPDATE manager_sessions SET topic = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE session_key = ?").run(title.slice(0, 200), sessionKey);
+  } finally {
+    db.close();
+  }
+}
+
+export function deleteSession(config: BrainConfig, sessionKey: string): void {
+  const db = new DatabaseSync(config.dbPath);
+  try {
+    db.prepare("DELETE FROM manager_messages WHERE session_key = ?").run(sessionKey);
+    db.prepare("DELETE FROM manager_sessions WHERE session_key = ?").run(sessionKey);
+  } finally {
+    db.close();
+  }
+}
+
+export function lastMessagePreview(config: BrainConfig, sessionKey: string): string | null {
+  const db = new DatabaseSync(config.dbPath);
+  try {
+    const row = db.prepare("SELECT content FROM manager_messages WHERE session_key = ? ORDER BY id DESC LIMIT 1").get(sessionKey) as { content?: string } | undefined;
+    return row?.content ? row.content.slice(0, 120) : null;
+  } finally {
+    db.close();
+  }
+}
+
+// ── App settings (key/value, FASE 3.7: ex. WhatsApp AI toggle) ─────────
+
+export function getSetting(config: BrainConfig, key: string, fallback = ""): string {
+  const db = new DatabaseSync(config.dbPath);
+  try {
+    const row = db.prepare("SELECT value FROM app_settings WHERE key = ?").get(key) as { value?: string } | undefined;
+    return row?.value ?? fallback;
+  } catch {
+    return fallback;
+  } finally {
+    db.close();
+  }
+}
+
+export function setSetting(config: BrainConfig, key: string, value: string): void {
+  const db = new DatabaseSync(config.dbPath);
+  try {
+    db.prepare(
+      "INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')",
+    ).run(key, value);
+  } finally {
+    db.close();
+  }
+}
