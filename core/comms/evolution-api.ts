@@ -43,8 +43,20 @@ async function evoRequest<T>(
 }
 
 export async function sendMessage(toNumber: string, text: string): Promise<{ messageId: string; status: string }> {
+  return sendMessageInternal(toNumber, text, false);
+}
+
+/**
+ * Envia mensagem mesmo para o owner (para agentes pessoais).
+ * ATENÇÃO: Use com cuidado para evitar loops de mensagens.
+ */
+export async function sendMessageToOwner(text: string): Promise<{ messageId: string; status: string }> {
+  return sendMessageInternal(OWNER_PHONE, text, true);
+}
+
+async function sendMessageInternal(toNumber: string, text: string, allowOwner: boolean): Promise<{ messageId: string; status: string }> {
   const normalized = toNumber.replace(/\D/g, "");
-  if (normalized === OWNER_PHONE || normalized === `55${OWNER_PHONE}`) {
+  if (!allowOwner && (normalized === OWNER_PHONE || normalized === `55${OWNER_PHONE}`)) {
     throw new Error("OWNER_PRIVATE_CHANNEL_DISABLED");
   }
   const result = await evoRequest<{

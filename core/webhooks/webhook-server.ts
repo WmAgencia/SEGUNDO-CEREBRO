@@ -48,9 +48,9 @@ export function startServer(config: BrainConfig, port = 3001): void {
         try {
           const payload = JSON.parse(body);
           const events = Array.isArray(payload) ? payload : [payload];
-          const results = events.map((evt) =>
+          const results = await Promise.all(events.map((evt) =>
             handleEvolutionWebhook(config, evt),
-          );
+          ));
           res.writeHead(200, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ ok: true, results }));
 

@@ -5,6 +5,8 @@ import { inboundPolicy } from "../comms/instance-state.ts";
 import { redactSecrets } from "../exec/redact.ts";
 import { ANA_PHONE, compilePersonalContext, personalReply, qualityGate } from "../personal/personal-agent.ts";
 import { setKillSwitch } from "../autonomous/cycle.ts";
+import { sendMessageToOwner } from "../comms/evolution-api.ts";
+import { ask } from "../orchestrator/brain-orchestrator.ts";
 
 const OWNER_PHONE = () => (process.env.OWNER_WHATSAPP ?? "5515981817336").replace(/\D/g, "");
 const OPS_GROUP_ID = () => process.env.SECOND_BRAIN_OPERATIONS_GROUP ?? "120363427273069174@g.us";
@@ -44,7 +46,7 @@ export function handleEvolutionWebhook(
 
     switch (event) {
       case "MESSAGES_UPSERT":
-        return processIncomingMessage(db, config, body.data, body.instance);
+        return await processIncomingMessage(db, config, body.data, body.instance);
       case "CONNECTION_UPDATE":
         logEvent(db, "connection_update", body.instance, {});
         return { processed: true, action: "connection_update_logged" };
@@ -61,12 +63,12 @@ export function handleEvolutionWebhook(
   }
 }
 
-function processIncomingMessage(
+async function processIncomingMessage(
   db: DatabaseSync,
   config: BrainConfig,
   data?: Record<string, unknown>,
   instanceName?: string,
-): {
+): Promise<{
   processed: boolean;
   action?: string;
   error?: string;
@@ -117,7 +119,8 @@ function processIncomingMessage(
 
   const ownerPhone = OWNER_PHONE();
   if (phone.replace(/\D/g, "") === ownerPhone) {
-    return { processed: false, action: "skipped:owner_private_chat_no_admin" };
+    // Owner receives direct AI responses via Second Brain
+    return processOwnerMessage(db, phone, pushName, externalId, content);
   }
 
   if (phone.replace(/\D/g, "") === ANA_PHONE) {
@@ -234,6 +237,91 @@ function processPersonalMessage(
   saveMessage(db, conversation.id, `draft_${externalId}`, "outbound", draft.text);
   logEvent(db, "personal_draft_created", ANA_PHONE, { confidence: draft.confidence, context: "PERSONAL" });
   return { processed: true, action: "personal_draft_generated", recipient: phone, intent: "PERSONAL" };
+}
+
+/**
+ * Processa mensagens do owner (Junin) - permite conversa direta via WhatsApp
+ */
+async function processOwnerMessage(
+  db: DatabaseSync,
+  config: BrainConfig,
+  phone: string,
+  name: string,
+  externalId: string,
+  content: string,
+): Promise<{ processed: boolean; action: string; recipient: string; intent: string }> {
+  const ownerPhone = OWNER_PHONE();
+  const normalizedPhone = phone.replace(/\D/g, "");
+
+  // Salvar mensagem recebida
+  const contact = resolveContact(db, normalizedPhone, name);
+  const conversation = resolveConversation(db, contact.id);
+  saveMessage(db, conversation.id, externalId, "inbound", content);
+
+  logEvent(db, "owner_message_received", ownerPhone, { content: content.slice(0, 100) });
+
+  // Usar o pipeline de IA do Second Brain para buscar informações
+  try {
+    const response = ask({
+      dbPath: config.dbPath,
+      query: content,
+      depth: 2,
+      maxChars: 2000,
+    });
+
+    // Construir resposta baseada nos hits de busca
+    let reply = `🤖 *Second Brain*\n\n`;
+
+    // Adicionar hits de busca relevantes
+    if (response.searchHits && response.searchHits.length > 0) {
+      reply += `📚 *Informações encontradas:*\n\n`;
+      for (const hit of response.searchHits.slice(0, 3)) {
+        const title = hit.title || hit.documentId || "Documento";
+        const snippet = hit.snippet || "";
+        reply += `*${title}*\n${snippet.slice(0, 150)}${snippet.length > 150 ? "..." : ""}\n\n`;
+      }
+    } else {
+      reply += `🔍 Não encontrei informações específicas sobre isso no seu Second Brain.\n\n`;
+    }
+
+    // Adicionar contexto se disponível
+    if (response.context && response.context.summary) {
+      reply += `📋 *Resumo:* ${response.context.summary.slice(0, 200)}...\n\n`;
+    }
+
+    // Resposta direta
+    reply += `---\n💡 Me mande mais detalhes se precisar de algo específico!\n\n`;
+    reply += `🧠 Second Brain OS`;
+
+    // Enviar resposta via WhatsApp
+    await sendMessageToOwner(reply);
+
+    // Salvar resposta no banco
+    saveMessage(db, conversation.id, `owner_reply_${Date.now()}`, "outbound", reply);
+
+    logEvent(db, "owner_reply_sent", ownerPhone, {
+      hits: response.searchHits?.length || 0,
+      action: "owner_query"
+    });
+
+    return { processed: true, action: "owner_reply_sent", recipient: phone, intent: "OWNER_QUERY" };
+
+  } catch (err) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    logEvent(db, "owner_reply_error", ownerPhone, { error: errorMsg });
+
+    // Enviar mensagem de erro amigável
+    const errorReply = `🤖 *Second Brain*\n\n` +
+      `❌ Desculpe, tive um problema ao processar sua mensagem.\n\n` +
+      `Tente novamente ou use o chat web para consultas mais complexas.\n\n` +
+      `🧠 Second Brain OS`;
+
+    try {
+      await sendMessageToOwner(errorReply);
+    } catch {}
+
+    return { processed: true, action: "owner_reply_error", recipient: phone, intent: "OWNER_QUERY" };
+  }
 }
 
 function handleOwnerCommand(
