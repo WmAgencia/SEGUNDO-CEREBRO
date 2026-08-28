@@ -57,7 +57,10 @@ export interface AgentServerOptions {
   agent?: SingleAgent;
 }
 
-export function createAgentServer(options: AgentServerOptions): { server: Server; config: BrainConfig; agent: SingleAgent } {
+/** Cria o handler HTTP das rotas do Single Agent (API + estático do public).
+ *  Separado de createAgentServer para permitir montar as rotas dentro de outro
+ *  processo (ex.: apps/hq/server.ts) sem criar um servidor extra. */
+export function createAgentHandler(options: AgentServerOptions): { handler: (req: IncomingMessage, res: ServerResponse) => Promise<void>; config: BrainConfig; agent: SingleAgent } {
   const config = options.config;
   const agent = options.agent ?? new SingleAgent();
 
@@ -93,7 +96,7 @@ export function createAgentServer(options: AgentServerOptions): { server: Server
     });
   }
 
-  const server = createServer(async (req, res) => {
+  const handler = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     if (req.method === "OPTIONS") { res.writeHead(204); res.end(); return; }
     const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
     const p = url.pathname;
@@ -349,8 +352,19 @@ export function createAgentServer(options: AgentServerOptions): { server: Server
     }
 
     send(res, 404, { error: "not found" });
-  });
+  };
 
+  return { handler, config, agent };
+}
+
+export function createAgentServer(options: AgentServerOptions): { server: Server; config: BrainConfig; agent: SingleAgent } {
+  const { handler, config, agent } = createAgentHandler(options);
+  const server = createServer((req, res) => {
+    handler(req, res).catch(() => {
+      if (!res.headersSent) res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "internal error" }));
+    });
+  });
   return { server, config, agent };
 }
 

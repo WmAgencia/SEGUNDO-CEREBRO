@@ -15,6 +15,7 @@ COPY connectors/ connectors/
 COPY apps/hq/server.ts apps/hq/server.ts
 COPY apps/hq/public/ apps/hq/public/
 COPY apps/hq/package.json apps/hq/package.json
+COPY apps/agent/ apps/agent/
 COPY apps/nutriva/src/ apps/nutriva/src/
 COPY apps/nutriva/public/ apps/nutriva/public/
 COPY config/ config/

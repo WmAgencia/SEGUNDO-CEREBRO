@@ -25,6 +25,7 @@ import { listNotifications, unreadCount, markRead, markAllRead, createNotificati
 import { runInitiativeAutonomously } from "../../core/hq/autonomous-executor.ts";
 import { getInstance as getWhatsAppInstance, setAiEnabled as setInstanceAiEnabled, setConnected as setInstanceConnected, planInstanceForAgent, assignAgentToInstance } from "../../core/comms/instance-state.ts";
 import { detectOrphanedRuns } from "../../core/agents/runtime-ops.ts";
+import { createAgentHandler } from "../agent/server.ts";
 
 // Self-healing do QR: rastreia o último QR emitido por instância. Se a Evolution
 // devolver o MESMO QR de novo (sessão travada em 'connecting' = QR antigo/inválido),
@@ -45,6 +46,14 @@ const allowedOrigins = (process.env.HQ_CORS_ORIGINS ?? "*").split(",").map((s) =
 const initDb = openDatabase(config.dbPath);
 applySchema(initDb);
 initDb.close();
+
+// Single Agent API (apps/agent/server.ts) montado neste mesmo processo —
+// reutiliza o mesmo brain.db/volume. O frontend ChatGPT-like (Vercel) roteia
+// /api/* para cá via rewrite.
+const agentContext = createAgentHandler({ config });
+
+// Prefixos de API do Single Agent (montados aqui; demais rotas continuam HQ).
+const AGENT_API_PREFIXES = ["/api/chat", "/api/agenda", "/api/connections", "/api/images", "/api/graphs", "/api/routing", "/api/health"] as const;
 
 function cors(req: import("node:http").IncomingMessage, res: import("node:http").ServerResponse): void {
   const origin = req.headers.origin ?? "";
@@ -67,6 +76,13 @@ const server = createServer((req, res) => {
   cors(req, res);
   if (req.method === "OPTIONS") { res.writeHead(204); res.end(); return; }
   const url = new URL(req.url ?? "/", `http://${host}:${port}`);
+  if (AGENT_API_PREFIXES.some((prefix) => url.pathname === prefix || url.pathname.startsWith(prefix + "/"))) {
+    agentContext.handler(req, res).catch(() => {
+      if (!res.headersSent) res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "agent handler internal error" }));
+    });
+    return;
+  }
   if (url.pathname === "/nutriva" || url.pathname.startsWith("/nutriva/")) {
     const inner = url.pathname.replace(/^\/nutriva/, "") || "/";
     handleNutrivaRequest(req, res, inner).catch(() => { res.writeHead(500, { "Content-Type": "application/json" }); res.end(JSON.stringify({ error: "nutriva internal error" })); });

@@ -157,9 +157,8 @@ describe("ModelGateway — fallback entre providers (E2E simulado)", () => {
       await gw.complete({ messages: [{ role: "user", content: "oi" }] });
       expect.unreachable("deveria lançar");
     } catch (e) {
-      const attempts = (e as { attempts?: unknown[] }).attempts;
-      expect(Array.isArray(attempts)).toBe(true);
-      expect((attempts as unknown[]).length).toBe(2); // alibaba(groq) ambos tentaram
+      const attempts = (e as { attempts?: Array<{ provider?: string }> }).attempts ?? [];
+      expect(attempts.length).toBe(2); // alibaba(groq) ambos tentaram
       expect(attempts[0]!.provider).toBe("alibaba"); // especialista primeiro
       expect(attempts[1]!.provider).toBe("groq");
     }
