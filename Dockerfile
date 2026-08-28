@@ -9,16 +9,29 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev 2>/dev/null || npm install --omit=dev
 
+# Copy all core modules
 COPY core/ core/
 COPY storage/ storage/
 COPY connectors/ connectors/
+COPY config/ config/
+COPY schemas/ schemas/
+
+# Copy apps
 COPY apps/hq/server.ts apps/hq/server.ts
 COPY apps/hq/public/ apps/hq/public/
 COPY apps/hq/package.json apps/hq/package.json
 COPY apps/agent/ apps/agent/
 COPY apps/nutriva/src/ apps/nutriva/src/
 COPY apps/nutriva/public/ apps/nutriva/public/
-COPY config/ config/
+COPY apps/nutriva/package.json apps/nutriva/package.json
+COPY apps/cli/ apps/cli/
+
+# Copy scripts
+COPY scripts/ scripts/
+
+# MCP
+COPY mcp/src/ mcp/src/
+COPY mcp/package.json mcp/package.json 2>/dev/null || true
 
 RUN mkdir -p /data/vault /app/data
 

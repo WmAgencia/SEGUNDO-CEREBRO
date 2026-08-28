@@ -5,11 +5,9 @@ data/
 *.db-shm
 .env*
 .git/
-tools/
-skills-sources/
 docs/
 tests/
-mcp/
-scripts/
 webhook-live.log
-apps/cli/
+
+# Ignore specific directories that shouldn't be in Docker
+# but allow the ones that should be included
