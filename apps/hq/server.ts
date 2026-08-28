@@ -26,6 +26,7 @@ import { runInitiativeAutonomously } from "../../core/hq/autonomous-executor.ts"
 import { getInstance as getWhatsAppInstance, setAiEnabled as setInstanceAiEnabled, setConnected as setInstanceConnected, planInstanceForAgent, assignAgentToInstance } from "../../core/comms/instance-state.ts";
 import { detectOrphanedRuns } from "../../core/agents/runtime-ops.ts";
 import { createAgentHandler } from "../agent/server.ts";
+import { handleEvolutionWebhook } from "../../core/webhooks/evolution-webhook.ts";
 
 // Self-healing do QR: rastreia o último QR emitido por instância. Se a Evolution
 // devolver o MESMO QR de novo (sessão travada em 'connecting' = QR antigo/inválido),
@@ -316,6 +317,21 @@ const server = createServer((req, res) => {
   }
   if (req.method === "POST" && url.pathname === "/api/hq/autonomous-run") {
     let body = ""; req.on("data", (chunk) => { body += chunk.toString(); }); req.on("end", async () => { try { const input = JSON.parse(body) as { initiativeId?: string; workspacePath?: string }; if (!input.initiativeId) throw new Error("initiativeId is required"); const workspace = input.workspacePath ?? path.resolve(process.cwd(), "apps", "nutriva"); const results = await runInitiativeAutonomously(config, input.initiativeId, workspace); res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify({ ok: true, results })); } catch (error) { res.writeHead(500, { "Content-Type": "application/json" }); res.end(JSON.stringify({ ok: false, error: error instanceof Error ? error.message : String(error) })); } }); return;
+  }
+  if (req.method === "POST" && url.pathname === "/webhooks/evolution") {
+    let body = ""; req.on("data", (chunk) => { body += chunk.toString(); });
+    req.on("end", async () => {
+      try {
+        const payload = JSON.parse(body);
+        const result = await handleEvolutionWebhook(config, payload);
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: true, ...result }));
+      } catch (error) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: false, error: error instanceof Error ? error.message : String(error) }));
+      }
+    });
+    return;
   }
   const requested = url.pathname === "/" ? "/index.html" : url.pathname;
   const file = path.resolve(publicDir, `.${requested}`); if (!file.startsWith(path.resolve(publicDir)) || !existsSync(file)) { res.writeHead(404); res.end("Not found"); return; }
