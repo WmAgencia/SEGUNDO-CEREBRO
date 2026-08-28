@@ -46,7 +46,9 @@ function isLeadGen(request: string): boolean {
 function graphKind(request: string): "rebuild" | "system_build" | "prospection" | "video" | "lead_gen" | null {
   const t = request;
   if (isLeadGen(t)) return "lead_gen";
-  if (/(prospec[çc][ãa]o|prospec|capta[çc][ãa]o de clientes|funil de vendas)/i.test(t)) return "prospection";
+  // Prospecção vira GRAPH apenas quando é um build concreto (sistema/funil/captação).
+  // "melhorar minha estratégia de prospecção" é PLAN (análise antes de executar).
+  if (/(sistema de prospec[çc][ãa]o|funil de vendas|capta[çc][ãa]o de clientes)/i.test(t)) return "prospection";
   if (/(gerar video|gera[çc][ãa]o de video|video automatizado|sistema de videos?)/i.test(t)) return "video";
   if (/(funciona(ndo|l))|deixar .*100|colocar .* pra funcionar|implantar|implementar|reparar|arrumar|corrigir|reconstruir|refatorar|auditar|revis[ãa]o geral|colocar .* no ar|colocar .* funcionando/i.test(t)) {
     return "rebuild";

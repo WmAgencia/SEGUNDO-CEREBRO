@@ -45,6 +45,12 @@ export interface SingleAgentOptions {
   llm?: (messages: ChatMessage[]) => Promise<{ content: string }>;
   registry?: ToolRegistry;
   maxTurns?: number;
+  /** Deadline total do loop (ms). Evita loop infinito por tempo. */
+  loopTimeoutMs?: number;
+  /** Máx. de chamadas de ferramenta idênticas (mesma tool+input) sem progresso. */
+  maxRepeatedToolCalls?: number;
+  /** Máx. de falhas consecutivas da mesma ferramenta antes de parar. */
+  maxPersistentFailures?: number;
 }
 
 const DEFAULT_SYSTEM: ChatMessage = {
@@ -90,6 +96,9 @@ export class SingleAgent {
   private registry: ToolRegistry;
   private llm: (messages: ChatMessage[]) => Promise<{ content: string }>;
   private maxTurns: number;
+  private loopTimeoutMs: number;
+  private maxRepeatedToolCalls: number;
+  private maxPersistentFailures: number;
 
   constructor(options: SingleAgentOptions = {}) {
     this.registry = options.registry ?? createDefaultRegistry();
@@ -105,6 +114,9 @@ export class SingleAgent {
       return { content: result.content };
     });
     this.maxTurns = options.maxTurns ?? 8;
+    this.loopTimeoutMs = options.loopTimeoutMs ?? 180_000;
+    this.maxRepeatedToolCalls = options.maxRepeatedToolCalls ?? 3;
+    this.maxPersistentFailures = options.maxPersistentFailures ?? 3;
   }
 
   /** Full turn: persist → context → LLM → (tool) → final answer → persist memory. */
@@ -117,6 +129,8 @@ export class SingleAgent {
       llm?: (m: ChatMessage[]) => Promise<{ content: string }>;
       resumeApproval?: { toolId: string; input: Record<string, unknown> } | null;
       onEvent?: AgentEventListener;
+      /** Kill switch: se abortado, o loop para imediatamente. */
+      signal?: AbortSignal;
     } = {},
   ): Promise<ChatTurnResult> {
     const emit = opts.onEvent ?? (() => {});
@@ -131,11 +145,30 @@ export class SingleAgent {
     let turnCount = 0;
     let contextNote = "";
     let toolResults: ChatTurnResult["toolResults"] = [];
+    // Salvaguardas do loop autônomo (FASE consolidação, seção 2):
+    const loopStartedAt = Date.now();
+    const toolCallSignatures = new Map<string, number>(); // tool+input -> qtd de chamadas
+    const toolFailureStreak = new Map<string, number>(); // tool -> falhas consecutivas
 
     // 1. compile context (deterministic)
     const cctx = await (await import("./context-compiler.ts")).compileContext({ subject: appendUser || "continuar trabalho" }, config);
     emit({ type: "context_compiled", detail: `contexto compilado (${cctx.charBudget.used}/${cctx.charBudget.max} chars)` });
-    contextNote = `\n\n--- CONTEXTO DO SECOND BRAIN (${cctx.charBudget.used}/${cctx.charBudget.max} chars) ---\n${cctx.summary ?? "sem contexto específico"}\n${cctx.documents.length ? "\nNotas relevantes: " + cctx.documents.slice(0, 4).map((d) => `[${d.path}] ${d.title}`).join("; ") : ""}\n${cctx.recentEvents.length ? "\nEventos recentes: " + cctx.recentEvents.slice(0, 3).map((e) => e.title).join("; ") : ""}\n--- FIM DO CONTEXTO ---\n\n--- FERRAMENTAS DISPONÍVEIS ---\n${toolList}\n--- FIM DAS FERRAMENTAS ---`;
+    // Dica de intenção (heurística) — auxilia o agente, não o obriga. O LLM decide.
+    let intentHint = "";
+    if (appendUser) {
+      try {
+        const { classifyIntent } = await import("../orchestration/planner.ts");
+        const intent = classifyIntent(appendUser);
+        const hints: Record<string, string> = {
+          SIMPLE: "responda conversacionalmente, sem ferramentas",
+          TOOL: "provavelmente uma única ferramenta resolve",
+          PLAN: "vale investigar/analisar antes de agir; proponha um plano se fizer sentido",
+          GRAPH: "tarefa multi-etapas: considere graph_plan e, após autorização, graph_execute",
+        };
+        intentHint = `\nINTENÇÃO SUGERIDA (heurística, não obrigatória): ${intent} — ${hints[intent] ?? ""}.`;
+      } catch { intentHint = ""; }
+    }
+    contextNote = `\n\n--- CONTEXTO DO SECOND BRAIN (${cctx.charBudget.used}/${cctx.charBudget.max} chars) ---\n${cctx.summary ?? "sem contexto específico"}\n${cctx.documents.length ? "\nNotas relevantes: " + cctx.documents.slice(0, 4).map((d) => `[${d.path}] ${d.title}`).join("; ") : ""}\n${cctx.recentEvents.length ? "\nEventos recentes: " + cctx.recentEvents.slice(0, 3).map((e) => e.title).join("; ") : ""}${intentHint}\n--- FIM DO CONTEXTO ---\n\n--- FERRAMENTAS DISPONÍVEIS ---\n${toolList}\n--- FIM DAS FERRAMENTAS ---`;
 
     const llm = opts.llm ?? this.llm;
 
@@ -152,6 +185,18 @@ export class SingleAgent {
     }
 
     while (turnCount < this.maxTurns) {
+      // Kill switch (cancelamento explícito)
+      if (opts.signal?.aborted) {
+        const msg = "Interrompido a seu pedido. O que já foi feito está salvo na sessão.";
+        persistUser(config, sessionKey, "assistant", msg);
+        return { type: "answer", message: { role: "assistant", content: msg }, contextUsed: cctx.charBudget, toolResults };
+      }
+      // Timeout do loop (evita loop infinito por tempo)
+      if (Date.now() - loopStartedAt > this.loopTimeoutMs) {
+        const msg = "Interrompi esta execução: atingi o tempo limite sem concluir. Posso retomar de onde parei se você quiser.";
+        persistUser(config, sessionKey, "assistant", msg);
+        return { type: "answer", message: { role: "assistant", content: msg }, contextUsed: cctx.charBudget, toolResults };
+      }
       turnCount++;
       const messages: ChatMessage[] = [
         DEFAULT_SYSTEM,
@@ -208,6 +253,28 @@ export class SingleAgent {
       if (!approvedTool.success && approvedTool.error?.toLowerCase().includes("approval")) {
         emit({ type: "approval_requested", toolId });
         return { type: "approval_requested", approval: { toolId, input: toolReq.input ?? {} }, toolResults };
+      }
+
+      // Detecção de loop: mesma tool+input repetida sem progresso
+      const callSig = `${toolId}:${JSON.stringify(toolReq.input ?? {})}`;
+      const sigCount = (toolCallSignatures.get(callSig) ?? 0) + 1;
+      toolCallSignatures.set(callSig, sigCount);
+      if (sigCount >= this.maxRepeatedToolCalls) {
+        const msg = `Parei de propósito: a ferramenta "${toolId}" foi chamada ${sigCount} vezes com a mesma entrada sem progresso. Vou resumir o que obtive e você decide o próximo passo.`;
+        persistUser(config, sessionKey, "assistant", msg);
+        return { type: "answer", message: { role: "assistant", content: msg }, contextUsed: cctx.charBudget, toolResults };
+      }
+      // Detecção de falha persistente da mesma ferramenta
+      if (!approvedTool.success) {
+        const streak = (toolFailureStreak.get(toolId) ?? 0) + 1;
+        toolFailureStreak.set(toolId, streak);
+        if (streak >= this.maxPersistentFailures) {
+          const msg = `A ferramenta "${toolId}" falhou ${streak} vezes seguidas (${(approvedTool.error ?? "erro").slice(0, 140)}). Interrompi para não insistir no erro. Posso tentar outra abordagem se quiser.`;
+          persistUser(config, sessionKey, "assistant", msg);
+          return { type: "answer", message: { role: "assistant", content: msg }, contextUsed: cctx.charBudget, toolResults };
+        }
+      } else {
+        toolFailureStreak.set(toolId, 0);
       }
       // loop continues: appends tool result to context for next LLM call
     }
