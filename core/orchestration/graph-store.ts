@@ -9,7 +9,7 @@
 import { DatabaseSync } from "node:sqlite";
 import type { BrainConfig } from "../config/loader.ts";
 import { openDatabase } from "../../storage/connection.ts";
-import {
+import type {
   GraphNode,
   GraphRun,
   GraphPlan,

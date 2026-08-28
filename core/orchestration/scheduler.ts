@@ -10,7 +10,7 @@
  * Parallelism ONLY when dependency(a,b)=false (already guaranteed by readiness).
  */
 
-import { GraphNode, GraphNodeStatus } from "./types.ts";
+import type { GraphNode, GraphNodeStatus } from "./types.ts";
 
 const BLOCKABLE: readonly GraphNodeStatus[] = ["FAILED", "BLOCKED", "CANCELLED"];
 

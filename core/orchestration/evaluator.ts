@@ -9,7 +9,7 @@
  *     (e.g. "PASS", "failed: 0") — when present, the node MUST match it.
  */
 
-import { EvaluateVerdict, GraphNode } from "./types.ts";
+import type { EvaluateVerdict, GraphNode } from "./types.ts";
 
 export function evaluateNode(node: GraphNode): EvaluateVerdict {
   const evidence: Array<{ kind: string; value: string }> = [...(node.evidence ?? [])];

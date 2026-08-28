@@ -71,10 +71,10 @@ function pointGatewayAtLocal(order: string, extra: Record<string, string> = {}) 
 
 describe("ModelGateway — seleção e configuração", () => {
   it("parseProviderOrder default e custom", () => {
-    expect(parseProviderOrder(undefined)).toEqual(["groq", "alibaba", "openrouter"]);
+    expect(parseProviderOrder(undefined)).toEqual(["groq", "openrouter"]);
     expect(parseProviderOrder("alibaba,groq")).toEqual(["alibaba", "groq"]);
     expect(parseProviderOrder("  groq , openrouter ")).toEqual(["groq", "openrouter"]);
-    expect(parseProviderOrder("")).toEqual(["groq", "alibaba", "openrouter"]);
+    expect(parseProviderOrder("")).toEqual(["groq", "openrouter"]);
   });
 
   it("loadGatewayGroqKeys ignora vazias e usa fallback GROQ_API_KEY", () => {
@@ -145,21 +145,33 @@ describe("ModelGateway — fallback entre providers (E2E simulado)", () => {
     expect(groq).toBe("groq");
   });
 
-  it("todos os providers falham → lança erro real com attempts (sem resposta fake)", async () => {
+  it("falha múltipla: em workload especializado (vision), Groq + Alibaba ambos tentam e falham", async () => {
     for (let i = 2; i <= 10; i++) delete process.env[`GROQ_API_KEY_${i}`];
     delete process.env.GROQ_API_KEY;
     pointGatewayAtLocal("groq,alibaba", { GROQ_API_KEY_1: "g1", ALIBABA_API_KEY: "a1" });
     behavior["g1"] = { status: 503, body: JSON.stringify({ error: { message: "unavailable" } }) };
     behavior["a1"] = { status: 500, body: JSON.stringify({ error: { message: "boom" } }) };
-    const gw = new ModelGateway(buildProviderChain({ env: process.env }));
+    // workload vision → Alibaba entra como especialista à frente do Groq
+    const gw = new ModelGateway(buildProviderChain({ env: process.env, workload: "vision" }));
     try {
       await gw.complete({ messages: [{ role: "user", content: "oi" }] });
       expect.unreachable("deveria lançar");
     } catch (e) {
       const attempts = (e as { attempts?: unknown[] }).attempts;
       expect(Array.isArray(attempts)).toBe(true);
-      expect((attempts as unknown[]).length).toBe(2);
+      expect((attempts as unknown[]).length).toBe(2); // alibaba(groq) ambos tentaram
+      expect(attempts[0]!.provider).toBe("alibaba"); // especialista primeiro
+      expect(attempts[1]!.provider).toBe("groq");
     }
+  });
+
+  it("chat genérico NÃO inclui Alibaba especialista mesmo com chave válida e na ordem", () => {
+    for (let i = 2; i <= 10; i++) delete process.env[`GROQ_API_KEY_${i}`];
+    delete process.env.GROQ_API_KEY;
+    pointGatewayAtLocal("groq,alibaba", { GROQ_API_KEY_1: "gk1", ALIBABA_API_KEY: "al1", OPENROUTER_API_KEY: "" });
+    // workload padrão é "chat" → especializado=false → Alibaba ignorado
+    const chain = buildProviderChain();
+    expect(chain.map((p) => p.name)).toEqual(["groq"]);
   });
 
   it("nenhum provider configurado → erro claro (não fake)", async () => {
@@ -253,8 +265,9 @@ describe("Alibaba/Qwen — seleção dinâmica de modelo por workload", () => {
     for (let i = 1; i <= 10; i++) delete process.env[`GROQ_API_KEY_${i}`];
     delete process.env.GROQ_API_KEY;
     pointGatewayAtLocal("alibaba", { ALIBABA_API_KEY: "sk-x", ALIBABA_MODEL: "", OPENROUTER_API_KEY: "" });
-    const chain = buildProviderChain({ env: process.env, workload: "reasoning" });
+    // vision é workload especializado → Alibaba entra
+    const chain = buildProviderChain({ env: process.env, workload: "vision" });
     expect(chain.map((p) => p.name)).toEqual(["alibaba"]);
-    expect(chain[0]!.model).toBe("qwen-max"); // reasoning → qwen-max
+    expect(chain[0]!.model).toBe("qwen-vl-max"); // vision → qwen-vl-max
   });
 });

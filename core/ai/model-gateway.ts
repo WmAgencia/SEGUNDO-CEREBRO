@@ -43,11 +43,17 @@ export function loadGatewayGroqKeys(env: NodeJS.ProcessEnv = process.env): strin
   return keys;
 }
 
-/** Ordem dos providers via MODEL_PROVIDER_ORDER (default: groq,alibaba,openrouter). */
+/** Ordem dos providers via MODEL_PROVIDER_ORDER (default: groq,openrouter —
+ *  Alibaba é especialista e entra só quando o workload pede visão/código/imagem). */
 export function parseProviderOrder(raw?: string): string[] {
-  const src = (raw ?? process.env.MODEL_PROVIDER_ORDER ?? "groq,alibaba,openrouter").toLowerCase();
+  const src = (raw ?? process.env.MODEL_PROVIDER_ORDER ?? "groq,openrouter").toLowerCase();
   const order = src.split(",").map((s) => s.trim()).filter(Boolean);
-  return order.length ? order : ["groq", "alibaba", "openrouter"];
+  return order.length ? order : ["groq", "openrouter"];
+}
+
+/** Workloads em que a Alibaba entra como especialista (não no chat genérico). */
+export function isAlibabaSpecializedWorkload(workload?: string): boolean {
+  return ["vision", "coding", "image"].includes(workload ?? "");
 }
 
 export function readGatewayEnv(env: NodeJS.ProcessEnv = process.env): GatewayEnv {
@@ -216,20 +222,29 @@ export interface BuildChainOptions {
   overrides?: Partial<Record<"groq" | "alibaba" | "openrouter", LLMProvider | null>>;
 }
 
-/** Monta a cadeia na ordem MODEL_PROVIDER_ORDER. Chaves vazias → provider omitido. */
+/** Monta a cadeia na ordem MODEL_PROVIDER_ORDER. Chaves vazias → provider omitido.
+ *  Alibaba/Qwen é ESPECIALISTA: entra apenas para workloads de visão/código/imagem
+ *  (e à frente), nunca no chat genérico — mesmo que esteja em MODEL_PROVIDER_ORDER. */
 export function buildProviderChain(opts: BuildChainOptions = {}): LLMProvider[] {
   const env = readGatewayEnv(opts.env ?? process.env);
   const order = env.order;
+  const workload = opts.workload ?? "chat";
+  const specialized = isAlibabaSpecializedWorkload(workload);
   const chain: LLMProvider[] = [];
+
+  // Especialista à frente quando o workload pede (visão/código/imagem) e há chave.
+  if (specialized && env.alibabaApiKey) {
+    chain.push(new AlibabaProvider({ apiKey: env.alibabaApiKey, baseUrl: env.alibabaBaseUrl, workload }));
+  }
+
   for (const name of order) {
-    const override = opts.overrides?.[name as "groq" | "alibaba" | "openrouter"];
+    // Alibaba é gerido acima (workload), não pelo ordenamento genérico.
+    if (name === "alibaba" || name === "qwen" || name === "dashscope") continue;
+    const override = opts.overrides?.[name as "groq" | "openrouter"];
     if (override === null) continue; // explicitamente desabilitado
     if (override) { chain.push(override); continue; }
     if (name === "groq") {
       if (env.groqKeys.length > 0) chain.push(new GroqGatewayProvider({ keys: env.groqKeys, model: opts.groqModel ?? env.groqModel, baseUrl: env.groqBaseUrl }));
-    } else if (name === "alibaba" || name === "qwen" || name === "dashscope") {
-      // ALIBABA_MODEL pode ficar vazio → modelo escolhido por workload
-      if (env.alibabaApiKey) chain.push(new AlibabaProvider({ apiKey: env.alibabaApiKey, baseUrl: env.alibabaBaseUrl, workload: opts.workload }));
     } else if (name === "openrouter") {
       if (env.openrouterApiKey) chain.push(new OpenAICompatibleAdapter({ name: "openrouter", baseUrl: env.openrouterBaseUrl, apiKey: env.openrouterApiKey, model: env.openrouterModel }));
     }

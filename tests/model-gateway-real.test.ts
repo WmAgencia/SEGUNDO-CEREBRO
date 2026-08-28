@@ -10,7 +10,7 @@ import { existsSync, readFileSync, mkdirSync, mkdtempSync, rmSync } from "node:f
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { ModelGateway, buildProviderChain, loadGatewayGroqKeys, readGatewayEnv } from "../core/ai/model-gateway.ts";
+import { ModelGateway, buildProviderChain, loadGatewayGroqKeys, readGatewayEnv, AlibabaProvider } from "../core/ai/model-gateway.ts";
 import { openDatabase, applySchema } from "../storage/connection.ts";
 import type { BrainConfig } from "../core/config/loader.ts";
 import type { LogLevel } from "../core/logger/logger.ts";
@@ -64,9 +64,9 @@ describe("ModelGateway — chamada REAL Alibaba/Qwen", () => {
       expect(true).toBe(true);
       return;
     }
-    // modelo resolvido por workload (ALIBABA_MODEL pode estar vazio); isola a
-    // Alibaba desabilitando o Groq para testar o provider de verdade
-    const gw = new ModelGateway(buildProviderChain({ env: process.env, workload: "chat", overrides: { groq: null, openrouter: null } }));
+    // Usa construtor direto com AlibabaProvider isolado — ignora
+    // specialization-workload gating do buildProviderChain para teste isolado.
+    const gw = new ModelGateway([new AlibabaProvider({ apiKey: env.alibabaApiKey, baseUrl: env.alibabaBaseUrl })]);
     try {
       const out = await gw.complete({ messages: [{ role: "user", content: "Responda apenas OK." }], maxTokens: 16 });
       expect(out.content.length).toBeGreaterThan(0);
