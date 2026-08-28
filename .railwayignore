@@ -11,5 +11,4 @@ core/second-brain.db
 core/second-brain.db-*
 *.log
 .git/
-apps/nutriva/
 apps/cli/
