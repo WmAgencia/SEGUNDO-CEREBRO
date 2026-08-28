@@ -1,6 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
 import type { CompletionRequest, CompletionResult, LLMProvider } from "./llm-provider.ts";
-import { GroqKeyPool } from "./groq-key-pool.ts";
+import { GroqKeyPool, classifyError } from "./groq-key-pool.ts";
+import { buildProviderChain, loadGatewayGroqKeys } from "./model-gateway.ts";
 
 export type ModelWorkload = "chat" | "reasoning" | "research" | "coding" | "vision" | "image" | "fast";
 export interface ModelRoute { provider: string; model: string; reason: string; estimatedCost: number | null; fallbackChain: string[]; }
@@ -71,15 +72,10 @@ export class GroqProvider implements LLMProvider {
   }
 }
 
-/** Carrega as chaves Groq de GROQ_API_KEY_1..N (até 10; fallback: GROQ_API_KEY única). Usa apenas as preenchidas. */
+/** Carrega as chaves Groq de GROQ_API_KEY_1..N (até 10; fallback: GROQ_API_KEY única). Usa apenas as preenchidas.
+ *  Delega para o Model Gateway (fonte única). */
 export function loadGroqKeys(): string[] {
-  const keys: string[] = [];
-  for (let i = 1; i <= 10; i++) {
-    const k = process.env[`GROQ_API_KEY_${i}`];
-    if (k && k.trim()) keys.push(k.trim());
-  }
-  if (keys.length === 0 && process.env.GROQ_API_KEY) keys.push(process.env.GROQ_API_KEY.trim());
-  return keys;
+  return loadGatewayGroqKeys();
 }
 
 /** Provider Groq com pool de chaves — rotação/cooldown/retry automáticos. */
@@ -99,23 +95,33 @@ export class GroqPoolProvider implements LLMProvider {
   }
 }
 
-/** Cadeia de providers padrão: Groq (pool) → OpenRouter. Nunca esconde erro do provider. */
+/** Cadeia de providers padrão — delega ao Model Gateway (ordem via MODEL_PROVIDER_ORDER,
+ *  inclui Groq pool + Alibaba/Qwen + OpenRouter). Nunca esconde erro do provider. */
 export function defaultProviderChain(route = selectModel({})): LLMProvider[] {
-  const chain: LLMProvider[] = [];
-  const groqKeys = loadGroqKeys();
-  if (groqKeys.length > 0) chain.push(new GroqPoolProvider({ keys: groqKeys, model: route.model }));
-  if (process.env.OPENROUTER_API_KEY) chain.push(new OpenRouterProvider(route));
-  if (chain.length === 0) chain.push(new OpenRouterProvider(route));
-  return chain;
+  const chain = buildProviderChain({ groqModel: process.env.GROQ_MODEL ?? route.model });
+  if (chain.length > 0) return chain;
+  // sem nenhuma chave configurada: mantém comportamento honesto (lança erro ao tentar)
+  return [new OpenRouterProvider(route)];
 }
 
-export interface GatewayResult extends CompletionResult { provider: string; latencyMs: number; totalTokens?: number; cost?: number; fallbackFrom?: string; }
+export interface GatewayResult extends CompletionResult { provider: string; latencyMs: number; totalTokens?: number; cost?: number; fallbackFrom?: string; keySlot?: number | null; fallbackCount?: number; }
 export async function completeWithGateway(db: DatabaseSync | null, request: CompletionRequest, selection: ModelSelection = {}, providers?: LLMProvider[]): Promise<GatewayResult> {
-  const route = selectModel(selection); const available = providers ?? defaultProviderChain(route); const started = Date.now(); let lastError: unknown;
+  const route = selectModel(selection); const available = providers ?? defaultProviderChain(route); const started = Date.now(); let lastError: unknown; let fallbackCount = 0;
   for (let i = 0; i < available.length; i++) {
     const provider = available[i]!;
-    try { const result = await provider.complete(request); const latencyMs = Date.now() - started; if (db) db.prepare("INSERT INTO model_generations (provider,model,status,prompt_tokens,completion_tokens,total_tokens,cost,latency_ms,fallback_from,error) VALUES (?,?,?,?,?,?,?,?,?,?)").run(provider.name, result.model, "COMPLETED", result.tokensPrompt ?? null, result.tokensCompletion ?? null, (result.tokensPrompt ?? 0) + (result.tokensCompletion ?? 0), null, latencyMs, i ? route.model : null, null); return { ...result, provider: provider.name, latencyMs, totalTokens: (result.tokensPrompt ?? 0) + (result.tokensCompletion ?? 0), fallbackFrom: i ? route.model : undefined }; } catch (error) { lastError = error; if (db) { try { db.prepare("INSERT INTO model_generations (provider,model,status,latency_ms,error) VALUES (?,?,?,?,?)").run(provider.name, provider.model, "FAILED", Date.now() - started, String(error)); } catch {} } }
+    const keySlot = (provider as { lastKeySlot?: number | null }).lastKeySlot ?? null;
+    try { const result = await provider.complete(request); const latencyMs = Date.now() - started; const slot = (provider as { lastKeySlot?: number | null }).lastKeySlot ?? keySlot; if (db) db.prepare("INSERT INTO model_generations (provider,model,status,prompt_tokens,completion_tokens,total_tokens,cost,latency_ms,fallback_from,error,key_slot,fallback_count,error_category) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)").run(provider.name, result.model, "COMPLETED", result.tokensPrompt ?? null, result.tokensCompletion ?? null, (result.tokensPrompt ?? 0) + (result.tokensCompletion ?? 0), null, latencyMs, i ? route.model : null, null, slot, fallbackCount, null); return { ...result, provider: provider.name, latencyMs, totalTokens: (result.tokensPrompt ?? 0) + (result.tokensCompletion ?? 0), fallbackFrom: i ? route.model : undefined, keySlot: slot, fallbackCount }; } catch (error) { lastError = error; const category = classifyError((error as { status?: number }).status ?? null, error); if (db) { try { db.prepare("INSERT INTO model_generations (provider,model,status,latency_ms,error,key_slot,fallback_count,error_category) VALUES (?,?,?,?,?,?,?,?)").run(provider.name, provider.model, "FAILED", Date.now() - started, redact(String(error)), (provider as { lastKeySlot?: number | null }).lastKeySlot ?? null, fallbackCount, category); } catch {} } if (i < available.length - 1) fallbackCount++; }
   }
-  if (db) db.prepare("INSERT INTO model_generations (provider,model,status,latency_ms,error) VALUES (?,?,?,?,?)").run(route.provider, route.model, "FAILED_CHAIN", Date.now() - started, String(lastError));
+  if (db) { try { db.prepare("INSERT INTO model_generations (provider,model,status,latency_ms,error,fallback_count,error_category) VALUES (?,?,?,?,?,?,?)").run(route.provider, route.model, "FAILED_CHAIN", Date.now() - started, redact(String(lastError)), fallbackCount, classifyError((lastError as { status?: number })?.status ?? null, lastError)); } catch {} }
   throw lastError instanceof Error ? lastError : new Error(String(lastError));
+}
+
+/** Remove padrões sensíveis antes de persistir erro (nunca vazar chave/token). */
+function redact(text: string): string {
+  return text
+    .replace(/gsk_[A-Za-z0-9]{10,}/g, "***")
+    .replace(/sk-[A-Za-z0-9_-]{16,}/g, "***")
+    .replace(/sk-or-v1-[A-Za-z0-9]+/g, "***")
+    .replace(/hf_[A-Za-z0-9]+/g, "***")
+    .replace(/Bearer\s+[A-Za-z0-9_.\-]{16,}/gi, "Bearer ***");
 }

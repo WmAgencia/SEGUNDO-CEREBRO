@@ -22,6 +22,9 @@ function createLedgerDb(): DatabaseSync {
     latency_ms INTEGER DEFAULT NULL,
     fallback_from TEXT DEFAULT NULL,
     error TEXT DEFAULT NULL,
+    key_slot INTEGER DEFAULT NULL,
+    fallback_count INTEGER DEFAULT NULL,
+    error_category TEXT DEFAULT NULL,
     created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
   )`).run();
   return db;

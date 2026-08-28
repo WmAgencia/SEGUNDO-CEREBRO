@@ -1,4 +1,4 @@
-export const SCHEMA_VERSION = 24;
+export const SCHEMA_VERSION = 25;
 
 export interface Migration {
   from: number;
@@ -700,6 +700,7 @@ export const SCHEMA_STATEMENTS: readonly string[] = [
      provider TEXT NOT NULL, model TEXT NOT NULL, status TEXT NOT NULL,
      prompt_tokens INTEGER, completion_tokens INTEGER, total_tokens INTEGER,
      cost REAL, latency_ms INTEGER, fallback_from TEXT, error TEXT,
+     key_slot INTEGER, fallback_count INTEGER, error_category TEXT,
      created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
    )`,
   `CREATE TABLE IF NOT EXISTS hq_notifications (
@@ -1080,6 +1081,14 @@ export const MIGRATIONS: readonly Migration[] = [
         value      TEXT NOT NULL,
         updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
       )`,
+    ],
+  },
+  {
+    from: 24,
+    statements: [
+      "ALTER TABLE model_generations ADD COLUMN key_slot INTEGER",
+      "ALTER TABLE model_generations ADD COLUMN fallback_count INTEGER",
+      "ALTER TABLE model_generations ADD COLUMN error_category TEXT",
     ],
   },
 ];

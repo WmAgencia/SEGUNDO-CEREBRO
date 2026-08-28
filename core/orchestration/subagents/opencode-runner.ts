@@ -59,6 +59,19 @@ export function resolveOpenCodeCommand(): string {
   return "opencode";
 }
 
+/** Resolve o modelo do runtime Graph/OpenCode: SECOND_BRAIN_GRAPH_MODEL >
+ *  modelo já configurado do SECOND_BRAIN_GRAPH_PROVIDER. Nunca inventa id —
+ *  usa o valor configurado do provider; se ausente, retorna null (OpenCode usa
+ *  o default dele). */
+export function resolveGraphModel(): string | null {
+  if (process.env.SECOND_BRAIN_GRAPH_MODEL) return process.env.SECOND_BRAIN_GRAPH_MODEL;
+  const provider = (process.env.SECOND_BRAIN_GRAPH_PROVIDER ?? "").toLowerCase();
+  if (provider === "groq") return process.env.GROQ_MODEL ?? null;
+  if (provider === "alibaba" || provider === "qwen" || provider === "dashscope") return process.env.ALIBABA_MODEL ?? null;
+  if (provider === "openrouter") return process.env.OPENROUTER_MODEL ?? null;
+  return null;
+}
+
 let cachedAvailability: boolean | null = null;
 
 export class OpenCodeSubagentRunner implements SubagentRunner {
@@ -115,9 +128,10 @@ export class OpenCodeSubagentRunner implements SubagentRunner {
       return { ok: false, status: "BLOCKED", output: "", sessionId: null, filesChanged: [], testsPassed: false, error: "OpenCode CLI indisponível (não encontrado no ambiente)", unavailable: true, durationMs: Date.now() - started };
     }
 
-    // Model is configurable (FASE 4, seção 15): explicit node model > env > none.
-    // Never hardcode a model here.
-    const model = opts.model ?? process.env.SECOND_BRAIN_GRAPH_MODEL ?? null;
+    // Modelo configurável (FASE Groq+Alibaba, seção 10): node model explícito >
+    // SECOND_BRAIN_GRAPH_MODEL > modelo do SECOND_BRAIN_GRAPH_PROVIDER. Nunca
+    // inventa model id: usa o valor já configurado do provider escolhido.
+    const model = opts.model ?? resolveGraphModel();
     const args = ["run", "--format", "json", "--agent", opts.agentId];
     if (model) args.push("--model", model);
     if (opts.parentSessionId) args.push("--session", opts.parentSessionId);
