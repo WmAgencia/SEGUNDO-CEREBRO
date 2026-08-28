@@ -91,7 +91,7 @@ export class ToolExecutor {
     }
   }
 
-  recordEvent(config: { dbPath: string }, event: { toolId: string; success: boolean; latencyMs: number; input: Record<string, unknown>; error?: string; sessionId?: string }): void {
+  recordEvent(config: { dbPath: string }, event: { toolId: string; success: boolean; latencyMs: number; input: Record<string, unknown>; error?: string; sessionId?: string; output?: unknown }): void {
     try {
       const db = new DatabaseSync(config.dbPath);
       try {
@@ -102,6 +102,7 @@ export class ToolExecutor {
             latency_ms: event.latencyMs,
             session: event.sessionId ?? null,
             error: event.error ?? null,
+            output: event.output ?? null,
           }),
         );
       } finally {

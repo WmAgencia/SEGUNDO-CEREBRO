@@ -165,10 +165,10 @@ export function createAgentHandler(options: AgentServerOptions): { handler: (req
           if (evt.type === "context_compiled") push("status", { stage: "Analisando contexto…" });
           else if (evt.type === "thinking") push("status", { stage: "Consultando o modelo…" });
           else if (evt.type === "tool_start") push("tool", { toolId: evt.toolId, phase: "start", graph: Boolean(evt.graph), stage: evt.graph ? "Executando Graph…" : `Executando ${evt.toolId}…` });
-          else if (evt.type === "tool_result") push("tool", { toolId: evt.toolId, phase: "done", success: evt.success, graph: Boolean(evt.graph) });
+          else if (evt.type === "tool_result") push("tool", { toolId: evt.toolId, phase: "done", success: evt.success, graph: Boolean(evt.graph), output: evt.output ?? null });
           else if (evt.type === "approval_requested") push("approval", { toolId: evt.toolId });
         };
-        const result = await agent.chat(config, key, text, createToolRequestApproval(key), { onEvent });
+        const result = await agent.chat(config, key, text, createToolRequestApproval(key), { onEvent, deferApproval: true });
         push("message", result);
         push("done", {});
         res.end();
@@ -185,7 +185,7 @@ export function createAgentHandler(options: AgentServerOptions): { handler: (req
       const body = await readBody(req);
       const text = String(body.text ?? "").trim();
       if (!text) { send(res, 400, { error: "text required" }); return; }
-      const result = await agent.chat(config, key, text, createToolRequestApproval(key));
+      const result = await agent.chat(config, key, text, createToolRequestApproval(key), { deferApproval: true });
       send(res, 200, result);
       return;
     }
@@ -305,11 +305,11 @@ export function createAgentHandler(options: AgentServerOptions): { handler: (req
       return;
     }
 
-    // ── Images ──
+    // ── Images (tool_execution de image_generate com URLs reais) ──
     if (req.method === "GET" && p === "/api/images") {
       const db = openDatabase(config.dbPath);
       try {
-        const rows = db.prepare("SELECT id, payload, occurred_at FROM events WHERE event_type='tool_execution' AND payload LIKE '%image_generate%' ORDER BY id DESC LIMIT 30").all() as Array<{ id: number; payload: string; occurred_at: string }>;
+        const rows = db.prepare("SELECT id, payload, occurred_at FROM events WHERE event_type='tool_execution' AND subject='image_generate' AND payload LIKE '%\"success\":true%' ORDER BY id DESC LIMIT 30").all() as Array<{ id: number; payload: string; occurred_at: string }>;
         send(res, 200, { images: rows });
       } finally { db.close(); }
       return;

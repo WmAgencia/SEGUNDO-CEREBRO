@@ -29,6 +29,7 @@ export interface AgentEvent {
   success?: boolean;
   graph?: boolean;
   detail?: string;
+  output?: unknown;
 }
 
 export type AgentEventListener = (evt: AgentEvent) => void;
@@ -38,7 +39,7 @@ export interface ChatTurnResult {
   type: "answer" | "approval_requested" | "error";
   approval?: { toolId: string; input: Record<string, unknown> };
   contextUsed?: { used: number; max: number };
-  toolResults?: Array<{ toolId: string; success: boolean; error?: string }>;
+  toolResults?: Array<{ toolId: string; success: boolean; error?: string; output?: unknown }>;
 }
 
 export interface SingleAgentOptions {
@@ -128,6 +129,8 @@ export class SingleAgent {
     opts: {
       llm?: (m: ChatMessage[]) => Promise<{ content: string }>;
       resumeApproval?: { toolId: string; input: Record<string, unknown> } | null;
+      /** Retorna approval_requested sem aguardar o callback HTTP do frontend. */
+      deferApproval?: boolean;
       onEvent?: AgentEventListener;
       /** Kill switch: se abortado, o loop para imediatamente. */
       signal?: AbortSignal;
@@ -173,15 +176,18 @@ export class SingleAgent {
     const llm = opts.llm ?? this.llm;
 
     // approval resume: execute the approved tool first, then continue the loop
-    if (opts.resumeApproval) {
-      const { toolId, input } = opts.resumeApproval;
+    let resume = opts.resumeApproval ?? null;
+    if (resume) {
+      const { toolId, input } = resume;
       const approvedTool = await this.executor.execute({
         toolId,
         input: input ?? {},
         ctx: { config, sessionId: sessionKey, userContext: requestApproval ? { requestApproval } : undefined },
         preApproved: true,
       });
-      toolResults.push({ toolId: approvedTool.toolId, success: approvedTool.success, error: approvedTool.error });
+      toolResults.push({ toolId: approvedTool.toolId, success: approvedTool.success, error: approvedTool.error, output: approvedTool.output ?? undefined });
+      this.executor.recordEvent(config, { toolId: approvedTool.toolId, success: approvedTool.success, latencyMs: approvedTool.latencyMs, input: input ?? {}, error: approvedTool.error, sessionId: sessionKey, output: approvedTool.output ?? undefined });
+      resume = null;
     }
 
     while (turnCount < this.maxTurns) {
@@ -229,18 +235,28 @@ export class SingleAgent {
       if (!toolReq) {
         // final textual answer
         const clean = answer.trim();
+        const enriched = ensureImageUrls(clean, toolResults);
         emit({ type: "answer" });
-        persistUser(config, sessionKey, "assistant", clean);
+        persistUser(config, sessionKey, "assistant", enriched);
         // persist memory (best effort, only if it looks like a fact/decision/idea)
-        await persistTurnMemory(config, sessionKey, userText, clean);
-        return { type: "answer", message: { role: "assistant", content: clean }, contextUsed: cctx.charBudget, toolResults };
+        await persistTurnMemory(config, sessionKey, userText, enriched);
+        return { type: "answer", message: { role: "assistant", content: enriched }, contextUsed: cctx.charBudget, toolResults };
       }
 
       // tool requested
       const toolId = toolReq.tool;
-      if (!this.registry.get(toolId)) {
+      const toolDef = this.registry.get(toolId);
+      if (!toolDef) {
         toolResults.push({ toolId, success: false, error: "ferramenta não registrada" });
         continue;
+      }
+      // Aprovação ANTES de executar: ferramentas de risco retornam approval_requested
+      // imediatamente (NÃO bloqueiam o turno esperando o humano). A execução real
+      // acontece via resumeApproval quando o usuário aprova no frontend — sem isso,
+      // a imagem nunca era criada: o tool ficava preso aguardando aprovação.
+      if (toolDef.requiresApproval && !resume && (opts.deferApproval || !requestApproval)) {
+        emit({ type: "approval_requested", toolId });
+        return { type: "approval_requested", approval: { toolId, input: toolReq.input ?? {} }, toolResults };
       }
       emit({ type: "tool_start", toolId, graph: toolId.startsWith("graph_") });
       const approvedTool = await this.executor.execute({
@@ -248,12 +264,9 @@ export class SingleAgent {
         input: toolReq.input ?? {},
         ctx: { config, sessionId: sessionKey, userContext: requestApproval ? { requestApproval } : undefined },
       });
-      emit({ type: "tool_result", toolId, success: approvedTool.success, graph: toolId.startsWith("graph_") });
-      toolResults.push({ toolId: approvedTool.toolId, success: approvedTool.success, error: approvedTool.error });
-      if (!approvedTool.success && approvedTool.error?.toLowerCase().includes("approval")) {
-        emit({ type: "approval_requested", toolId });
-        return { type: "approval_requested", approval: { toolId, input: toolReq.input ?? {} }, toolResults };
-      }
+      emit({ type: "tool_result", toolId, success: approvedTool.success, graph: toolId.startsWith("graph_"), output: approvedTool.output ?? undefined });
+      this.executor.recordEvent(config, { toolId: approvedTool.toolId, success: approvedTool.success, latencyMs: approvedTool.latencyMs, input: toolReq.input ?? {}, error: approvedTool.error, sessionId: sessionKey, output: approvedTool.output ?? undefined });
+      toolResults.push({ toolId: approvedTool.toolId, success: approvedTool.success, error: approvedTool.error, output: approvedTool.output ?? undefined });
 
       // Detecção de loop: mesma tool+input repetida sem progresso
       const callSig = `${toolId}:${JSON.stringify(toolReq.input ?? {})}`;
@@ -283,6 +296,24 @@ export class SingleAgent {
     persistUser(config, sessionKey, "assistant", stop);
     return { type: "answer", message: { role: "assistant", content: stop }, contextUsed: cctx.charBudget, toolResults };
   }
+}
+
+/** Garante que URLs de imagem gerada (image_generate) apareçam na resposta
+ *  final — o frontend renderiza como <img> inline (estética ChatGPT). */
+function ensureImageUrls(answer: string, toolResults: ChatTurnResult["toolResults"]): string {
+  const urls: string[] = [];
+  for (const t of toolResults ?? []) {
+    if (t.toolId === "image_generate" && t.success) {
+      const out = t.output as { urls?: unknown } | undefined;
+      const list = out?.urls;
+      if (typeof list === "string") urls.push(list);
+      else if (Array.isArray(list)) for (const u of list) if (typeof u === "string") urls.push(u);
+    }
+  }
+  if (!urls.length) return answer;
+  const missing = urls.filter((u) => !answer.includes(u));
+  if (!missing.length) return answer;
+  return answer + "\n\n" + missing.join("\n");
 }
 
 async function openLedger(): Promise<import("node:sqlite").DatabaseSync | null> {

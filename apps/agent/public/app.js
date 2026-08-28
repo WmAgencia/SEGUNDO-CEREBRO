@@ -69,9 +69,24 @@
   function renderMarkdown(text) {
     let src = String(text ?? "");
     const blocks = [];
+    const images = [];
     src = src.replace(/```([\w-]*)\n([\s\S]*?)```/g, (_, lang, code) => {
       blocks.push('<pre><code data-lang="' + esc(lang) + '">' + esc(code) + "</code></pre>");
       return "\u0000B" + (blocks.length - 1) + "\u0000";
+    });
+    // imagens markdown ![alt](url) → <img> inline (estética ChatGPT)
+    src = src.replace(/!\[([^\]]*)\]\((https?:[^)\s]+)\)/g, (_, alt, url) => {
+      images.push('<img src="' + esc(url) + '" alt="' + esc(alt || "imagem") + '" loading="lazy"/>');
+      return "\u0000I" + (images.length - 1) + "\u0000";
+    });
+    // URLs de imagem (Pollinations e extensões) → <img> inline
+    src = src.replace(/(https?:\/\/image\.pollinations\.ai\/[^\s"'<>)]+)/g, (m) => {
+      images.push('<img src="' + esc(m) + '" alt="imagem" loading="lazy"/>');
+      return "\u0000I" + (images.length - 1) + "\u0000";
+    });
+    src = src.replace(/(https?:\/\/[^\s"'<>)]+\.(?:png|jpe?g|gif|webp)(?:\?[^\s"'<>)]*)?)/gi, (m) => {
+      images.push('<img src="' + esc(m) + '" alt="imagem" loading="lazy"/>');
+      return "\u0000I" + (images.length - 1) + "\u0000";
     });
     let html = esc(src);
     html = html.replace(/`([^`\n]+)`/g, '<code class="inline">$1</code>');
@@ -85,10 +100,11 @@
     html = html.replace(/^&gt; (.+)$/gm, "<blockquote>$1</blockquote>");
     html = html.replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
     html = html.split(/\n{2,}/).map((p) => {
-      if (/^<(h[123]|ul|pre|blockquote|li)/.test(p.trim())) return p;
+      if (/^<(h[123]|ul|pre|blockquote|li|img)/.test(p.trim())) return p;
       return "<p>" + p.replace(/\n/g, "<br/>") + "</p>";
     }).join("\n");
     html = html.replace(/\u0000B(\d+)\u0000/g, (_, i) => blocks[Number(i)] || "");
+    html = html.replace(/\u0000I(\d+)\u0000/g, (_, i) => images[Number(i)] || "");
     return html;
   }
 
@@ -280,13 +296,57 @@
   }
 
   // ── Typing ──
-  function setTyping(on) { $("#typing").classList.toggle("hidden", !on); $("#input").disabled = on; $("#btn-send").disabled = on; }
+  function setTyping(on) {
+    $("#typing").classList.toggle("hidden", !on);
+    $("#input").disabled = on;
+    $("#btn-send").disabled = on;
+    if (!on && $("#view-chat") && !$("#view-chat").classList.contains("hidden")) {
+      // volta o foco para o campo de digitar (digitar de novo sem clicar)
+      const inp = $("#input");
+      inp.focus();
+      inp.setSelectionRange(inp.value.length, inp.value.length);
+    }
+  }
 
   function toast(text) {
     const el = $("#toast");
     el.textContent = text;
     el.classList.remove("hidden");
     setTimeout(() => el.classList.add("hidden"), 3500);
+  }
+
+  // ── Modal in-app (nada de popups do navegador) ──
+  function openModal(title, bodyHtml, actions) {
+    const root = $("#modal-root");
+    const overlay = document.createElement("div");
+    overlay.className = "modal-overlay";
+    overlay.innerHTML =
+      '<div class="modal" role="dialog" aria-modal="true">' +
+      '<div class="modal-head">' + esc(title) + "</div>" +
+      '<div class="modal-body">' + bodyHtml + "</div>" +
+      '<div class="modal-actions"></div>' +
+      "</div>";
+    const actionsBox = overlay.querySelector(".modal-actions");
+    (actions || []).forEach((a) => {
+      const btn = document.createElement("button");
+      btn.className = a.primary ? "btn-primary" : "btn-secondary";
+      btn.textContent = a.label;
+      btn.addEventListener("click", () => { overlay.remove(); if (a.onClick) a.onClick(); });
+      actionsBox.appendChild(btn);
+    });
+    overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.remove(); });
+    root.appendChild(overlay);
+    return overlay;
+  }
+
+  // Extrai URLs de imagem de um output de tool (image_generate).
+  function extractImageUrls(obj) {
+    const out = [];
+    if (!obj) return out;
+    if (typeof obj.urls === "string") out.push(obj.urls);
+    else if (Array.isArray(obj.urls)) obj.urls.forEach((u) => { if (typeof u === "string") out.push(u); });
+    if (typeof obj.url === "string") out.push(obj.url);
+    return out;
   }
 
   // ── Sessões ──
@@ -306,13 +366,44 @@
         div.addEventListener("click", (e) => { if (e.target.closest(".s-actions")) return; openSession(s.sessionKey); });
         div.querySelector('[data-act="ren"]').addEventListener("click", async (e) => {
           e.stopPropagation();
-          const nt = prompt("Novo título da conversa:", title);
-          if (nt && nt.trim()) { try { await api("/api/chat/session/" + encodeURIComponent(s.sessionKey), { title: nt.trim() }, "PATCH"); loadSessions(); if (s.sessionKey === currentSession) $("#chat-title").textContent = nt.trim(); } catch (err) { toast(err.message); } }
+          const overlay = openModal(
+            "Renomear conversa",
+            '<input class="modal-input" id="modal-rename-input" value="' + esc(title) + '" maxlength="80" placeholder="Novo título"/>',
+            [
+              { label: "Cancelar" },
+              {
+                label: "Salvar",
+                primary: true,
+                onClick: async () => {
+                  const nt = overlay.querySelector("#modal-rename-input").value.trim();
+                  if (!nt) return;
+                  try { await api("/api/chat/session/" + encodeURIComponent(s.sessionKey), { title: nt }, "PATCH"); loadSessions(); if (s.sessionKey === currentSession) $("#chat-title").textContent = nt; toast("Conversa renomeada."); } catch (err) { toast(err.message); }
+                },
+              },
+            ],
+          );
+          const inp = overlay.querySelector("#modal-rename-input");
+          setTimeout(() => { inp.focus(); inp.select(); }, 10);
+          inp.addEventListener("keydown", (e) => {
+            if (e.key === "Enter") { const save = overlay.querySelector(".modal-actions .btn-primary"); if (save) save.click(); }
+          });
         });
         div.querySelector('[data-act="del"]').addEventListener("click", async (e) => {
           e.stopPropagation();
-          if (!confirm("Excluir esta conversa?")) return;
-          try { await api("/api/chat/session/" + encodeURIComponent(s.sessionKey), {}, "DELETE"); if (s.sessionKey === currentSession) newChat(); loadSessions(); } catch (err) { toast(err.message); }
+          openModal(
+            "Excluir conversa",
+            "<p>Excluir esta conversa? Esta ação não pode ser desfeita.</p>",
+            [
+              { label: "Cancelar" },
+              {
+                label: "Excluir",
+                primary: true,
+                onClick: async () => {
+                  try { await api("/api/chat/session/" + encodeURIComponent(s.sessionKey), {}, "DELETE"); if (s.sessionKey === currentSession) newChat(); loadSessions(); toast("Conversa excluída."); } catch (err) { toast(err.message); }
+                },
+              },
+            ],
+          );
         });
         list.appendChild(div);
       });
@@ -517,7 +608,7 @@
         let url = null;
         try {
           const p = JSON.parse(row.payload);
-          url = p.url || (p.urls && p.urls[0]) || null;
+          url = (p.output && (p.output.url || (p.output.urls && p.output.urls[0]))) || p.url || (p.urls && p.urls[0]) || null;
         } catch {}
         const div = document.createElement("div");
         div.className = "grid-card";
