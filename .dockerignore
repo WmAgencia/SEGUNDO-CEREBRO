@@ -1,13 +1,9 @@
 node_modules/
-data/
+.git/
 *.db
 *.db-wal
 *.db-shm
 .env*
-.git/
 docs/
 tests/
 webhook-live.log
-
-# Ignore specific directories that shouldn't be in Docker
-# but allow the ones that should be included
