@@ -18,6 +18,7 @@ import {
   loadGatewayGroqKeys,
   parseProviderOrder,
   readGatewayEnv,
+  resolveAlibabaModel,
 } from "../core/ai/model-gateway.ts";
 import type { LLMProvider } from "../core/ai/llm-provider.ts";
 import type { CompletionRequest, CompletionResult } from "../core/ai/llm-provider.ts";
@@ -211,5 +212,49 @@ describe("ModelGateway — adapters e segurança", () => {
     expect(out.attempts[0]!.tokensPrompt).toBe(7);
     expect(out.attempts[0]!.tokensCompletion).toBe(9);
     expect(JSON.stringify(out.attempts)).not.toContain("gm-"); // nenhum valor de chave
+  });
+});
+
+describe("Alibaba/Qwen — seleção dinâmica de modelo por workload", () => {
+  it("ALIBABA_MODEL explícito sobrepõe para todos os workloads", () => {
+    const env = { ALIBABA_MODEL: "qwen-custom" } as NodeJS.ProcessEnv;
+    expect(resolveAlibabaModel("chat", env)).toBe("qwen-custom");
+    expect(resolveAlibabaModel("reasoning", env)).toBe("qwen-custom");
+  });
+
+  it("ALIBABA_MODEL vazio → modelo por workload (cada agente usa o adequado)", () => {
+    const env = { ALIBABA_MODEL: "" } as NodeJS.ProcessEnv;
+    expect(resolveAlibabaModel("fast", env)).toBe("qwen-turbo");
+    expect(resolveAlibabaModel("chat", env)).toBe("qwen-plus");
+    expect(resolveAlibabaModel("reasoning", env)).toBe("qwen-max");
+    expect(resolveAlibabaModel("research", env)).toBe("qwen-long");
+    expect(resolveAlibabaModel("coding", env)).toBe("qwen-max");
+    expect(resolveAlibabaModel("vision", env)).toBe("qwen-vl-max");
+  });
+
+  it("workload desconhecido → default chat", () => {
+    const env = { ALIBABA_MODEL: "" } as NodeJS.ProcessEnv;
+    expect(resolveAlibabaModel(undefined, env)).toBe("qwen-plus");
+    expect(resolveAlibabaModel("algo-inexistente", env)).toBe("qwen-plus");
+  });
+
+  it("AlibabaProvider usa modelo do workload quando ALIBABA_MODEL vazio", () => {
+    setEnv({ ALIBABA_API_KEY: "sk-test", ALIBABA_MODEL: "", ALIBABA_BASE_URL: "http://x" });
+    const pChat = new AlibabaProvider({ workload: "chat" });
+    expect(pChat.model).toBe("qwen-plus");
+    const pReason = new AlibabaProvider({ workload: "reasoning" });
+    expect(pReason.model).toBe("qwen-max");
+    // model explícito vence
+    const pExplicit = new AlibabaProvider({ model: "qwen-max", workload: "chat" });
+    expect(pExplicit.model).toBe("qwen-max");
+  });
+
+  it("buildProviderChain inclui Alibaba só com chave (modelo vazio = auto por workload)", () => {
+    for (let i = 1; i <= 10; i++) delete process.env[`GROQ_API_KEY_${i}`];
+    delete process.env.GROQ_API_KEY;
+    pointGatewayAtLocal("alibaba", { ALIBABA_API_KEY: "sk-x", ALIBABA_MODEL: "", OPENROUTER_API_KEY: "" });
+    const chain = buildProviderChain({ env: process.env, workload: "reasoning" });
+    expect(chain.map((p) => p.name)).toEqual(["alibaba"]);
+    expect(chain[0]!.model).toBe("qwen-max"); // reasoning → qwen-max
   });
 });

@@ -65,6 +65,30 @@ export function readGatewayEnv(env: NodeJS.ProcessEnv = process.env): GatewayEnv
   };
 }
 
+// ── Alibaba/Qwen: seleção de modelo por workload ───────────────────────
+// Modelos reais do DashScope (Model Studio). NUNCA inventar id — estes são os
+// modelos documentados. ALIBABA_MODEL (se preenchido) sobrepõe para todos;
+// vazio → escolha automática por workload (cada agente usa o modelo adequado).
+export type QwenWorkload = "fast" | "chat" | "reasoning" | "research" | "coding" | "vision" | "image";
+
+export const QWEN_MODELS_BY_WORKLOAD: Record<QwenWorkload, string> = {
+  fast: "qwen-turbo",        // classificação/resp. rápida e barata
+  chat: "qwen-plus",         // conversa equilibrada
+  reasoning: "qwen-max",     // planejamento/raciocínio
+  research: "qwen-long",     // contexto amplo p/ pesquisa
+  coding: "qwen-max",        // implementação/revisão de código
+  vision: "qwen-vl-max",     // imagem/visão
+  image: "qwen-plus",        // fallback (chat-completions não gera imagem)
+};
+
+/** Resolve o modelo Alibaba/Qwen: ALIBABA_MODEL explícito > por workload > default. */
+export function resolveAlibabaModel(workload?: string, env: NodeJS.ProcessEnv = process.env): string {
+  const explicit = env.ALIBABA_MODEL ?? env.DASHSCOPE_MODEL ?? "";
+  if (explicit.trim()) return explicit.trim();
+  const key = (workload ?? "chat") as QwenWorkload;
+  return QWEN_MODELS_BY_WORKLOAD[key] ?? QWEN_MODELS_BY_WORKLOAD.chat;
+}
+
 // ── Adapter genérico OpenAI-compatible (Alibaba/OpenRouter/Groq single) ──
 
 export interface OpenAIAdapterOptions {
@@ -137,15 +161,17 @@ function tagged(message: string, status: number): Error & { status?: number } {
   return e;
 }
 
-/** Provider Alibaba/Qwen (DashScope OpenAI-compatible). Modelo NUNCA inventado: vem de ALIBABA_MODEL. */
+/** Provider Alibaba/Qwen (DashScope OpenAI-compatible).
+ *  Modelo NUNCA inventado: ALIBABA_MODEL explícito OU escolha por workload
+ *  (cada agente usa o modelo Qwen adequado — ver QWEN_MODELS_BY_WORKLOAD). */
 export class AlibabaProvider extends OpenAICompatibleAdapter {
-  constructor(opts: { apiKey?: string; baseUrl?: string; model?: string; timeoutMs?: number } = {}) {
+  constructor(opts: { apiKey?: string; baseUrl?: string; model?: string; workload?: string; timeoutMs?: number } = {}) {
     const env = readGatewayEnv();
     super({
       name: "alibaba",
       baseUrl: opts.baseUrl ?? env.alibabaBaseUrl,
       apiKey: opts.apiKey ?? env.alibabaApiKey,
-      model: opts.model ?? env.alibabaModel,
+      model: opts.model ?? resolveAlibabaModel(opts.workload),
       timeoutMs: opts.timeoutMs,
     });
   }
@@ -184,6 +210,8 @@ export interface BuildChainOptions {
   env?: NodeJS.ProcessEnv;
   /** Sobrescreve o modelo Groq (ex.: rota por workload). */
   groqModel?: string;
+  /** Workload atual — usado para escolher o modelo Qwen por agente. */
+  workload?: string;
   /** Permite injetar providers prontos (testes). */
   overrides?: Partial<Record<"groq" | "alibaba" | "openrouter", LLMProvider | null>>;
 }
@@ -200,7 +228,8 @@ export function buildProviderChain(opts: BuildChainOptions = {}): LLMProvider[] 
     if (name === "groq") {
       if (env.groqKeys.length > 0) chain.push(new GroqGatewayProvider({ keys: env.groqKeys, model: opts.groqModel ?? env.groqModel, baseUrl: env.groqBaseUrl }));
     } else if (name === "alibaba" || name === "qwen" || name === "dashscope") {
-      if (env.alibabaApiKey && env.alibabaModel) chain.push(new AlibabaProvider({ apiKey: env.alibabaApiKey, baseUrl: env.alibabaBaseUrl, model: env.alibabaModel }));
+      // ALIBABA_MODEL pode ficar vazio → modelo escolhido por workload
+      if (env.alibabaApiKey) chain.push(new AlibabaProvider({ apiKey: env.alibabaApiKey, baseUrl: env.alibabaBaseUrl, workload: opts.workload }));
     } else if (name === "openrouter") {
       if (env.openrouterApiKey) chain.push(new OpenAICompatibleAdapter({ name: "openrouter", baseUrl: env.openrouterBaseUrl, apiKey: env.openrouterApiKey, model: env.openrouterModel }));
     }

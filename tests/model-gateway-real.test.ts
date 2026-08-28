@@ -57,14 +57,16 @@ describe("ModelGateway — chamada REAL Groq", () => {
 });
 
 describe("ModelGateway — chamada REAL Alibaba/Qwen", () => {
-  it("Alibaba responde se configurado; senão BLOCKED (sem ALIBABA_API_KEY)", async () => {
+  it("Alibaba responde se chave válida; senão BLOCKED com motivo exato", async () => {
     const env = readGatewayEnv();
-    if (!env.alibabaApiKey || !env.alibabaModel) {
-      console.log("[REAL] Alibaba BLOCKED — ALIBABA_API_KEY/ALIBABA_MODEL ausentes em .env.local");
+    if (!env.alibabaApiKey) {
+      console.log("[REAL] Alibaba BLOCKED — ALIBABA_API_KEY ausente em .env.local");
       expect(true).toBe(true);
       return;
     }
-    const gw = new ModelGateway(buildProviderChain({ env: process.env }));
+    // modelo resolvido por workload (ALIBABA_MODEL pode estar vazio); isola a
+    // Alibaba desabilitando o Groq para testar o provider de verdade
+    const gw = new ModelGateway(buildProviderChain({ env: process.env, workload: "chat", overrides: { groq: null, openrouter: null } }));
     try {
       const out = await gw.complete({ messages: [{ role: "user", content: "Responda apenas OK." }], maxTokens: 16 });
       expect(out.content.length).toBeGreaterThan(0);

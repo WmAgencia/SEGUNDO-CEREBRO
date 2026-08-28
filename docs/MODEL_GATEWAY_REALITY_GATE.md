@@ -17,7 +17,7 @@ Single Agent não conhece Groq/Alibaba diretamente.
 | `core/orchestration/subagents/opencode-runner.ts` | `resolveGraphModel()` — modelo do Graph/OpenCode via `SECOND_BRAIN_GRAPH_MODEL` / `SECOND_BRAIN_GRAPH_PROVIDER` (usa modelo já configurado, nunca inventa id). |
 | `storage/schema.ts` | v25 — `model_generations` + `key_slot`, `fallback_count`, `error_category`. |
 | `.env.local` | placeholders **adicionados sem sobrescrever**: `ALIBABA_API_KEY/BASE_URL/MODEL`, `MODEL_PROVIDER_ORDER`, `SECOND_BRAIN_GRAPH_PROVIDER/MODEL`. |
-| `tests/model-gateway.test.ts` | 12 testes (seleção/rotação/cooldown/fallback/401/429/500/timeout/indisponível/segurança). |
+| `tests/model-gateway.test.ts` | 17 testes (seleção/rotação/cooldown/fallback/401/429/500/timeout/indisponível/segurança). |
 | `tests/model-gateway-real.test.ts` | 4 testes com providers REAIS. |
 
 **Nenhum** novo agent/loop/orchestrator/context-engine criado. SingleAgent,
@@ -29,12 +29,30 @@ Graph Engine, Tool Registry e Context Compiler existentes foram reutilizados.
 
 | Provider | Modelo | Resultado | Evidência |
 |---|---|---|---|
-| Groq (chave real 1 de 5) | `openai/gpt-oss-120b` | **PASS REAL** | `provider=groq keySlot=1 latency≈500ms` |
-| Groq via SingleAgent | `openai/gpt-oss-120b` | **PASS REAL** | chat "Oi" → `"Oi! Como posso te ajudar hoje?"` |
-| Alibaba/Qwen | — | **BLOCKED** | `ALIBABA_API_KEY`/`ALIBABA_MODEL` ausentes |
-| Fallback Groq→Alibaba | — | **PASS REAL** (simulado) / parcial real | Groq→429→Alibaba responde (simulado); real respondeu por Groq |
+| Groq (chave real 1 de 5) | `openai/gpt-oss-120b` | **PASS REAL** | `provider=groq keySlot=1 latency≈430ms` |
+| Groq via SingleAgent | `openai/gpt-oss-120b` | **PASS REAL** | chat "Oi" → resposta natural |
+| Alibaba/Qwen | auto por workload | ⛔ **BLOCKED_AUTH** | chave colada → `HTTP 401 Incorrect API key provided` (testado nas regiões China e intl) |
+| Fallback Groq→Alibaba | — | **PASS REAL** | cadeia responde por Groq; Alibaba isolada retorna 401 honesto |
 
-**Chaves Groq detectadas: 5** (GROQ_API_KEY_1..5 preenchidas; 6..10 vazias ignoradas). Nenhuma chave revelada.
+**Chaves Groq detectadas: 5** (GROQ_API_KEY_1..5; 6..10 vazias ignoradas). Nenhuma revelada.
+
+### Seleção dinâmica de modelo Qwen (por agente/workload)
+
+`ALIBABA_MODEL` pode ficar **vazio** — o gateway escolhe o modelo Qwen adequado a
+cada agente/workload (`resolveAlibabaModel` + `QWEN_MODELS_BY_WORKLOAD`):
+
+| Workload | Modelo Qwen |
+|---|---|
+| fast | qwen-turbo |
+| chat | qwen-plus |
+| reasoning | qwen-max |
+| research | qwen-long |
+| coding | qwen-max |
+| vision | qwen-vl-max |
+
+Se `ALIBABA_MODEL` for preenchido, ele vale para todos (override). Modelos são os
+reais documentados do DashScope — nenhum id inventado. O workload é propagado do
+SingleAgent (`completeWithGateway(selection.workload)`) até o provider.
 
 ---
 
@@ -46,7 +64,7 @@ Graph Engine, Tool Registry e Context Compiler existentes foram reutilizados.
 | múltiplas chaves Groq | ✅ REAL | 5 detectadas; round-robin + rotação testadas |
 | rotação funcionando | ✅ REAL | key1 falha→key2 responde (keySlot=2); round-robin |
 | cooldown funcionando | ✅ REAL | 429→COOLDOWN, recuperação automática (groq-key-pool) |
-| Alibaba funcionando | ⛔ BLOCKED | sem `ALIBABA_API_KEY`/`ALIBABA_MODEL` (código pronto+testado simulado) |
+| Alibaba funcionando | ⛔ BLOCKED_AUTH | chave colada inválida (`Incorrect API key`); código+seleção dinâmica prontos |
 | fallback funcionando | ✅ REAL | cadeia `MODEL_PROVIDER_ORDER`; Groq→429→Alibaba (simulado) |
 | streaming funcionando | ⚠️ PARTIAL | SSE por eventos de status existe; token-streaming não implementado |
 | tool calling funcionando | ✅ REAL | tools executadas no loop do SingleAgent |
@@ -55,7 +73,7 @@ Graph Engine, Tool Registry e Context Compiler existentes foram reutilizados.
 | Agent Loop funcionando | ✅ REAL | maxTurns/timeout/kill-switch/detecção loop+falha |
 | Graph funcionando | ✅ REAL | DAG/scheduler/executor/evaluator/rework/recovery |
 | OpenCode funcionando | ⚠️ PARTIAL→BLOCKED | CLI invocada real; conclusão de subagente bloqueada por capacidade de LLM |
-| testes passando | ✅ | 517 testes |
+| testes passando | ✅ | 522 testes |
 | typecheck passando | ✅ | limpo |
 | git diff --check | ✅ | limpo |
 | produção validada | ⚠️ PARTIAL | frontend Vercel live; backend persistente requer Railway/VPS |
@@ -64,9 +82,12 @@ Graph Engine, Tool Registry e Context Compiler existentes foram reutilizados.
 
 ## 4. Bloqueios honestos (não mascarados)
 
-1. **Alibaba/Qwen**: `BLOCKED — ALIBABA_API_KEY e ALIBABA_MODEL ausentes em .env.local`.
-   Código do provider está pronto e testado com dublê HTTP. Para desbloquear:
-   preencher `ALIBABA_API_KEY`, `ALIBABA_MODEL` (ex.: `qwen-plus`) e `ALIBABA_BASE_URL`.
+1. **Alibaba/Qwen**: `BLOCKED_AUTH — a chave colada em ALIBABA_API_KEY é inválida`.
+   Testado de verdade: `HTTP 401 Incorrect API key provided` (regiões China e
+   internacional). O código do provider + seleção dinâmica de modelo estão prontos
+   e testados; falta uma chave DashScope/Model Studio válida. Para desbloquear:
+   gerar uma chave em https://dashscope.console.aliyun.com (Model Studio) e colar
+   em `ALIBABA_API_KEY`. `ALIBABA_MODEL` pode ficar vazio (auto por workload).
 2. **OpenCode subagent concluindo tarefa**: `BLOCKED — capacidade de LLM`. O contexto
    do OpenCode (~38k tokens) excede o Groq free (8k TPM) → `ContextOverflowError`.
    O Model Gateway resolve para prompts pequenos; subagentes OpenCode precisam de um
@@ -88,6 +109,6 @@ Graph Engine, Tool Registry e Context Compiler existentes foram reutilizados.
 
 ## 6. Testes
 
-- `tests/model-gateway.test.ts` — 12 testes (dublê HTTP local).
+- `tests/model-gateway.test.ts` — 17 testes (dublê HTTP local).
 - `tests/model-gateway-real.test.ts` — 4 testes reais (Groq real, Alibaba BLOCKED, fallback, chat real SingleAgent).
-- Regressão completa: **517 testes passando** (2 skipped pré-existentes), typecheck limpo.
+- Regressão completa: **522 testes passando** (2 skipped pré-existentes), typecheck limpo.

@@ -24,7 +24,7 @@ export function selectModel(input: ModelSelection): ModelRoute {
   return { provider: process.env.SECOND_BRAIN_MODEL_PROVIDER ?? "openrouter", model, reason: route.reason, estimatedCost: input.costBudget ?? null, fallbackChain: route.fallbacks };
 }
 
-function inferWorkload(input: ModelSelection): ModelWorkload {
+export function inferWorkload(input: ModelSelection): ModelWorkload {
   const text = `${input.agent ?? ""} ${input.task ?? ""}`.toLowerCase();
   if (input.requiredCapabilities?.some((c) => /image|vision|audio/i.test(c))) return "vision";
   if (/code|coding|engineer|developer|test|debug/i.test(text)) return "coding";
@@ -96,9 +96,10 @@ export class GroqPoolProvider implements LLMProvider {
 }
 
 /** Cadeia de providers padrão — delega ao Model Gateway (ordem via MODEL_PROVIDER_ORDER,
- *  inclui Groq pool + Alibaba/Qwen + OpenRouter). Nunca esconde erro do provider. */
-export function defaultProviderChain(route = selectModel({})): LLMProvider[] {
-  const chain = buildProviderChain({ groqModel: process.env.GROQ_MODEL ?? route.model });
+ *  inclui Groq pool + Alibaba/Qwen + OpenRouter). O workload escolhe o modelo Qwen.
+ *  Nunca esconde erro do provider. */
+export function defaultProviderChain(route = selectModel({}), workload?: string): LLMProvider[] {
+  const chain = buildProviderChain({ groqModel: process.env.GROQ_MODEL ?? route.model, workload });
   if (chain.length > 0) return chain;
   // sem nenhuma chave configurada: mantém comportamento honesto (lança erro ao tentar)
   return [new OpenRouterProvider(route)];
@@ -106,7 +107,7 @@ export function defaultProviderChain(route = selectModel({})): LLMProvider[] {
 
 export interface GatewayResult extends CompletionResult { provider: string; latencyMs: number; totalTokens?: number; cost?: number; fallbackFrom?: string; keySlot?: number | null; fallbackCount?: number; }
 export async function completeWithGateway(db: DatabaseSync | null, request: CompletionRequest, selection: ModelSelection = {}, providers?: LLMProvider[]): Promise<GatewayResult> {
-  const route = selectModel(selection); const available = providers ?? defaultProviderChain(route); const started = Date.now(); let lastError: unknown; let fallbackCount = 0;
+  const route = selectModel(selection); const workload = selection.workload ?? inferWorkload(selection); const available = providers ?? defaultProviderChain(route, workload); const started = Date.now(); let lastError: unknown; let fallbackCount = 0;
   for (let i = 0; i < available.length; i++) {
     const provider = available[i]!;
     const keySlot = (provider as { lastKeySlot?: number | null }).lastKeySlot ?? null;
