@@ -18,17 +18,17 @@ export interface WebhookEvent {
   data?: Record<string, unknown>;
 }
 
-export function handleEvolutionWebhook(
+export async function handleEvolutionWebhook(
   config: BrainConfig,
   body: WebhookEvent,
-): {
+): Promise<{
   processed: boolean;
   action?: string;
   error?: string;
   intent?: string;
   recipient?: string;
   approval?: { id: number; decision: string; customer: string; draft: string };
-} {
+}> {
   if (!body.event || !body.instance) {
     return { processed: false, error: "missing event or instance" };
   }
@@ -262,7 +262,7 @@ async function processOwnerMessage(
 
   // Usar o pipeline de IA do Second Brain para buscar informações
   try {
-    const response = ask({
+    const response = await ask({
       dbPath: config.dbPath,
       query: content,
       depth: 2,

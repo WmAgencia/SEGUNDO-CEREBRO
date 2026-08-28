@@ -3,7 +3,7 @@ import { redactSecrets } from "../exec/redact.ts";
 const BASE_URL = () => process.env.EVOLUTION_API_URL ?? "";
 const API_KEY = () => process.env.EVOLUTION_API_KEY ?? "";
 const INSTANCE = () => process.env.EVOLUTION_INSTANCE ?? "SECOM";
-const OWNER_PHONE = "15981817336";
+const OWNER_PHONE = () => (process.env.OWNER_WHATSAPP ?? "5515981817336").replace(/\D/g, "");
 
 export interface EvolutionMessage {
   key: { remoteJid: string; fromMe: boolean; id: string };
@@ -56,7 +56,8 @@ export async function sendMessageToOwner(text: string): Promise<{ messageId: str
 
 async function sendMessageInternal(toNumber: string, text: string, allowOwner: boolean): Promise<{ messageId: string; status: string }> {
   const normalized = toNumber.replace(/\D/g, "");
-  if (!allowOwner && (normalized === OWNER_PHONE || normalized === `55${OWNER_PHONE}`)) {
+  const owner = OWNER_PHONE();
+  if (!allowOwner && (normalized === owner || normalized === `55${owner}`)) {
     throw new Error("OWNER_PRIVATE_CHANNEL_DISABLED");
   }
   const result = await evoRequest<{
