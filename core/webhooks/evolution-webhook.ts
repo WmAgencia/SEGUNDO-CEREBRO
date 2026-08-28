@@ -63,19 +63,21 @@ export async function handleEvolutionWebhook(
   }
 }
 
-async function processIncomingMessage(
-  db: DatabaseSync,
-  config: BrainConfig,
-  data?: Record<string, unknown>,
-  instanceName?: string,
-): Promise<{
+interface ProcessResult {
   processed: boolean;
   action?: string;
   error?: string;
   intent?: string;
   recipient?: string;
   approval?: { id: number; decision: string; customer: string; draft: string };
-} {
+}
+
+async function processIncomingMessage(
+  db: DatabaseSync,
+  config: BrainConfig,
+  data?: Record<string, unknown>,
+  instanceName?: string,
+): Promise<ProcessResult> {
   const key = (data?.key as Record<string, unknown>) ?? {};
   const externalId = String(key.id ?? "");
   const fromMe = Boolean(key.fromMe);
