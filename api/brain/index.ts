@@ -87,7 +87,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return;
     }
 
-    if (from !== OWNER_PHONE) {
+    // Owner can be identified by either:
+    // - Exact match against OWNER_PHONE (5515981817336)
+    // - The LID format (189494074573054)
+    const fromDigits = from.replace(/\D/g, '');
+    const ownerDigits = OWNER_PHONE.replace(/\D/g, '');
+    const ownerLid = '189494074573054';
+    const isOwner =
+      fromDigits === ownerDigits ||
+      fromDigits === ownerLid ||
+      fromDigits === `55${ownerDigits}`;
+
+    if (!isOwner) {
       res.status(200).json({ ok: true, action: 'skipped:not_owner' });
       return;
     }
