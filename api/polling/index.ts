@@ -7,7 +7,7 @@ const OWNER_PHONE = (process.env.OWNER_WHATSAPP ?? '5515981817336').replace(/\D/
 
 interface ChatMessage {
   id: string;
-  key: { remoteJid: string; fromMe: boolean; id: string };
+  key: { remoteJid: string; fromMe: boolean; id: string; participant?: string };
   pushName?: string;
   messageType?: string;
   message?: { conversation?: string; extendedTextMessage?: { text?: string } };
@@ -40,13 +40,15 @@ async function sendMessage(toNumber: string, text: string): Promise<{ messageId:
   return { messageId: result.key?.id ?? 'unknown' };
 }
 
-async function processOwnerMessage(name: string, content: string): Promise<string> {
+async function processOwnerMessage(name: string, content: string, isGroup: boolean): Promise<string> {
+  const location = isGroup ? 'no grupo' : 'na conversa';
   const reply = [
     '🧠 *Second Brain*',
     '',
-    `Olá ${name}! Recebi sua mensagem: "${content}"`,
+    `Olá ${name}! Recebi sua mensagem ${location}:`,
+    `"${content}"`,
     '',
-    '💡 Via polling ativo (30s).',
+    '💡 Respondendo via polling ativo.',
     `Chat web: https://segundo-cerebro-jet.vercel.app`,
   ].join('\n');
   return reply;
@@ -80,41 +82,106 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (now - ts > 24 * 60 * 60 * 1000) seen.delete(id);
     }
 
-    // Fetch recent messages from the owner chat
-    const result = await evoRequest<{ messages: { records: ChatMessage[]; total: number } }>(
-      'POST',
-      `/chat/findMessages/${EVOLUTION_INSTANCE}`,
-      {
-        where: { key: { remoteJid: `${OWNER_PHONE}@s.whatsapp.net` } },
-        limit: 10,
-      }
-    );
+    // Fetch recent messages - BOTH direct and group chats with owner
+    const jidsToCheck = [
+      `${OWNER_PHONE}@s.whatsapp.net`,  // direct conversation
+    ];
 
-    const messages = result.messages?.records ?? [];
     let processedCount = 0;
-    const results: Array<{ id: string; action: string; preview?: string }> = [];
+    const results: Array<{ id: string; jid: string; action: string; preview?: string }> = [];
+    let totalScanned = 0;
 
-    // Process from oldest to newest, skipping already-seen
-    for (const msg of messages.reverse()) {
-      if (msg.key.fromMe) continue;
-      if (!msg.key.id) continue;
-      if (seen.has(msg.key.id)) continue;
+    // Check direct chat with owner
+    for (const jid of jidsToCheck) {
+      const result = await evoRequest<{ messages: { records: ChatMessage[]; total: number } }>(
+        'POST',
+        `/chat/findMessages/${EVOLUTION_INSTANCE}`,
+        { where: { key: { remoteJid: jid } }, limit: 20 }
+      );
 
-      const content = msg.message?.conversation ?? msg.message?.extendedTextMessage?.text;
-      if (!content || !content.trim()) {
+      const messages = result.messages?.records ?? [];
+      totalScanned += messages.length;
+
+      for (const msg of messages) {
+        if (msg.key.fromMe) continue;
+        if (!msg.key.id) continue;
+        if (seen.has(msg.key.id)) continue;
+
+        const content = msg.message?.conversation ?? msg.message?.extendedTextMessage?.text;
+        if (!content || !content.trim()) {
+          seen.set(msg.key.id, now);
+          continue;
+        }
+
+        // Skip messages from other participants in groups (LID format)
+        if (msg.key.participant && msg.key.participant.endsWith('@lid')) continue;
+
         seen.set(msg.key.id, now);
-        continue;
+        processedCount++;
+
+        try {
+          const reply = await processOwnerMessage(msg.pushName ?? OWNER_PHONE, content.trim(), false);
+          const sent = await sendMessage(OWNER_PHONE, reply);
+          results.push({ id: msg.key.id, jid, action: `replied:${sent.messageId}`, preview: content.slice(0, 50) });
+        } catch (err) {
+          results.push({ id: msg.key.id, jid, action: `error:${err instanceof Error ? err.message : String(err)}` });
+        }
+        break; // one per poll
       }
+      if (processedCount > 0) break;
+    }
 
-      seen.set(msg.key.id, now);
-      processedCount++;
+    // If no direct message, check groups where owner might be participant
+    if (processedCount === 0) {
+      // Fetch all chats (groups + direct)
+      const allChats = await evoRequest<Array<{ id: string; name?: string }>>(
+        'GET',
+        `/group/findGroups/${EVOLUTION_INSTANCE}?getParticipants=true`
+      ).catch(() => []);
 
-      try {
-        const reply = await processOwnerMessage(msg.pushName ?? OWNER_PHONE, content.trim());
-        const sent = await sendMessage(OWNER_PHONE, reply);
-        results.push({ id: msg.key.id, action: `replied:${sent.messageId}`, preview: content.slice(0, 50) });
-      } catch (err) {
-        results.push({ id: msg.key.id, action: `error:${err instanceof Error ? err.message : String(err)}` });
+      const ownerLid = `${OWNER_PHONE}@s.whatsapp.net`;
+
+      for (const group of allChats.slice(0, 10)) {
+        if (!group.id.endsWith('@g.us')) continue;
+
+        const result = await evoRequest<{ messages: { records: ChatMessage[] } }>(
+          'POST',
+          `/chat/findMessages/${EVOLUTION_INSTANCE}`,
+          { where: { key: { remoteJid: group.id } }, limit: 10 }
+        );
+
+        const messages = result.messages?.records ?? [];
+        totalScanned += messages.length;
+
+        for (const msg of messages) {
+          if (msg.key.fromMe) continue;
+          if (!msg.key.id) continue;
+          if (seen.has(msg.key.id)) continue;
+
+          const participant = msg.key.participant?.replace(/\D/g, '') ?? '';
+          const isFromOwner = participant === OWNER_PHONE;
+
+          if (!isFromOwner) continue;
+
+          const content = msg.message?.conversation ?? msg.message?.extendedTextMessage?.text;
+          if (!content || !content.trim()) {
+            seen.set(msg.key.id, now);
+            continue;
+          }
+
+          seen.set(msg.key.id, now);
+          processedCount++;
+
+          try {
+            const reply = await processOwnerMessage(msg.pushName ?? OWNER_PHONE, content.trim(), true);
+            const sent = await sendMessage(OWNER_PHONE, reply);
+            results.push({ id: msg.key.id, jid: group.id, action: `replied:${sent.messageId}`, preview: content.slice(0, 50) });
+          } catch (err) {
+            results.push({ id: msg.key.id, jid: group.id, action: `error:${err instanceof Error ? err.message : String(err)}` });
+          }
+          break;
+        }
+        if (processedCount > 0) break;
       }
     }
 
@@ -122,7 +189,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       ok: true,
       processed: processedCount,
       seen_total: seen.size,
-      scanned: messages.length,
+      scanned: totalScanned,
       results,
       timestamp: new Date().toISOString(),
     });
