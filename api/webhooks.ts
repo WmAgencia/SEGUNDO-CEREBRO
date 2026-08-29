@@ -1,12 +1,21 @@
 /**
  * Vercel Function: handles Evolution API webhooks + health check.
- * Routes:
- *   GET  /api/health
- *   POST /api/webhooks/evolution
- *   GET  /api/evolution/status
+ * Uses default Node.js runtime (auto-detected).
  */
 
-import type { VercelRequest, VercelResponse } from '@vercel/node';
+interface VercelRequest {
+  method: string;
+  url: string;
+  body: unknown;
+  headers: Record<string, string | undefined>;
+}
+
+interface VercelResponse {
+  status: (code: number) => VercelResponse;
+  json: (body: unknown) => void;
+  end: () => void;
+  setHeader: (name: string, value: string) => void;
+}
 
 const EVOLUTION_API_URL = process.env.EVOLUTION_API_URL ?? '';
 const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY ?? '';
@@ -58,11 +67,6 @@ async function getConnectionState(): Promise<string> {
   }
 }
 
-async function searchBrain(query: string): Promise<string> {
-  // Lightweight response - points to the web UI for detailed search
-  return `Para buscar "${query}", use o chat web em https://segundo-cerebro-jet.vercel.app`;
-}
-
 async function processOwnerMessage(phone: string, name: string, content: string): Promise<string> {
   const reply = [
     '🧠 *Second Brain*',
@@ -78,7 +82,6 @@ async function processOwnerMessage(phone: string, name: string, content: string)
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  // CORS
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -87,7 +90,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return;
   }
 
-  // Health check
   if (req.method === 'GET' && req.url === '/api/health') {
     res.status(200).json({
       status: 'ok',
@@ -100,7 +102,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return;
   }
 
-  // Evolution status
   if (req.method === 'GET' && req.url === '/api/evolution/status') {
     try {
       const state = await getConnectionState();
@@ -118,8 +119,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return;
   }
 
-  // Webhook receiver
-  if (req.method === 'POST' && req.url?.startsWith('/api/webhooks/evolution')) {
+  if (req.method === 'POST' && (req.url ?? '').startsWith('/api/webhooks/evolution')) {
     try {
       const body = (typeof req.body === 'string' ? JSON.parse(req.body) : req.body) as {
         event: string;
@@ -133,7 +133,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       const event = body.event.toUpperCase().replace(/[.\-\s]+/g, '_');
-
       if (event !== 'MESSAGES_UPSERT') {
         res.status(200).json({ ok: true, action: `ignored:${event}` });
         return;
@@ -158,13 +157,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const phone = remoteJid.split('@')[0] ?? remoteJid;
       const pushName = body.data?.pushName ?? phone;
 
-      // Only respond to owner
       if (phone.replace(/\D/g, '') !== OWNER_PHONE) {
         res.status(200).json({ ok: true, action: 'skipped:not_owner' });
         return;
       }
 
-      // Process and reply
       const reply = await processOwnerMessage(phone, pushName, msgContent.trim());
       const sent = await sendMessage(phone, reply);
 

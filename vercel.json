@@ -3,10 +3,5 @@
   "framework": null,
   "buildCommand": null,
   "outputDirectory": "apps/agent/public",
-  "cleanUrls": true,
-  "functions": {
-    "api/**/*.ts": {
-      "runtime": "nodejs24.x"
-    }
-  }
+  "cleanUrls": true
 }
