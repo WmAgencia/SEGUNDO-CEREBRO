@@ -3,5 +3,11 @@
   "framework": null,
   "buildCommand": null,
   "outputDirectory": "apps/agent/public",
-  "cleanUrls": true
+  "cleanUrls": true,
+  "crons": [
+    {
+      "path": "/api/ping",
+      "schedule": "*/5 * * * *"
+    }
+  ]
 }
