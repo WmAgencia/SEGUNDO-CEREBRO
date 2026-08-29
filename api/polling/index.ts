@@ -72,59 +72,67 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const results: Array<{ id: string; jid: string; action: string; preview?: string }> = [];
     let totalScanned = 0;
 
-    // 1. Check direct chat with owner
-    const directJid = `${OWNER_PHONE}@s.whatsapp.net`;
-    const directResult = await evoRequest<{ messages: { records: ChatMessage[]; total: number } }>(
-      'POST',
-      `/chat/findMessages/${EVOLUTION_INSTANCE}`,
-      { where: { key: { remoteJid: directJid } }, limit: 10 }
-    );
+    // 1. Check direct chat with owner (multiple formats)
+    const ownerJids = [
+      `${OWNER_PHONE}@s.whatsapp.net`,  // standard WhatsApp
+      `${OWNER_PHONE}@lid`,              // LID format (sometimes used)
+      '189494074573054@lid',             // observed LID for owner (189494074573054)
+    ];
 
-    const directMessages = directResult.messages?.records ?? [];
-    totalScanned += directMessages.length;
+    // Iterate through ALL owner JID formats (s.whatsapp.net, lid, observed)
+    for (const directJid of ownerJids) {
+      const directResult = await evoRequest<{ messages: { records: ChatMessage[]; total: number } }>(
+        'POST',
+        `/chat/findMessages/${EVOLUTION_INSTANCE}`,
+        { where: { key: { remoteJid: directJid } }, limit: 10 }
+      );
 
-    for (const msg of directMessages) {
-      if (msg.key.fromMe) continue;
-      if (!msg.key.id) continue;
-      if (seen.has(msg.key.id)) continue;
+      const directMessages = directResult.messages?.records ?? [];
+      totalScanned += directMessages.length;
 
-      const content = msg.message?.conversation ?? msg.message?.extendedTextMessage?.text;
-      if (!content || !content.trim()) {
+      for (const msg of directMessages) {
+        if (msg.key.fromMe) continue;
+        if (!msg.key.id) continue;
+        if (seen.has(msg.key.id)) continue;
+
+        const content = msg.message?.conversation ?? msg.message?.extendedTextMessage?.text;
+        if (!content || !content.trim()) {
+          seen.set(msg.key.id, now);
+          continue;
+        }
+
         seen.set(msg.key.id, now);
-        continue;
+        processedCount++;
+
+        try {
+          const brainRes = await fetch(`${SELF_URL}/api/brain`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              message: content,
+              from: OWNER_PHONE,
+              pushName: msg.pushName,
+            }),
+            signal: AbortSignal.timeout(60_000),
+          });
+
+          const brainData = await brainRes.json();
+          results.push({
+            id: msg.key.id,
+            jid: directJid,
+            action: brainData.action ?? 'brain_called',
+            preview: content.slice(0, 50),
+          });
+        } catch (err) {
+          results.push({
+            id: msg.key.id,
+            jid: directJid,
+            action: `brain_error:${err instanceof Error ? err.message : String(err)}`,
+          });
+        }
+        break;
       }
-
-      seen.set(msg.key.id, now);
-      processedCount++;
-
-      // Call /api/brain to generate response
-      try {
-        const brainRes = await fetch(`${SELF_URL}/api/brain`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            message: content,
-            from: OWNER_PHONE,
-            pushName: msg.pushName,
-          }),
-          signal: AbortSignal.timeout(60_000),
-        });
-
-        const brainData = await brainRes.json();
-        results.push({
-          id: msg.key.id,
-          jid: directJid,
-          action: brainData.action ?? 'brain_called',
-          preview: content.slice(0, 50),
-        });
-      } catch (err) {
-        results.push({
-          id: msg.key.id,
-          jid: directJid,
-          action: `brain_error:${err instanceof Error ? err.message : String(err)}`,
-        });
-      }
-      break;
+      if (processedCount > 0) break;
     }
 
     // 2. If no direct message, check groups where owner participates
