@@ -65,7 +65,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           await fetch(`${SELF_URL}/api/brain`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ message: content, from: OWNER_PHONE }),
+            body: JSON.stringify({
+              message: content,
+              from: jid,  // send to the actual JID the message came from
+            }),
             signal: AbortSignal.timeout(60_000),
           });
           processed++;

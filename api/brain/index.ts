@@ -95,7 +95,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const reply = await callClaude(message);
     if (!reply) throw new Error('Empty Claude response');
 
-    const sent = await sendWhatsApp(OWNER_PHONE, reply);
+    const sent = await sendWhatsApp(from, reply);
 
     res.status(200).json({
       ok: true,
