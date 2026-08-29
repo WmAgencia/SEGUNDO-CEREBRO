@@ -41,6 +41,59 @@ function findVaultPath(): string | null {
   return null;
 }
 
+async function downloadVaultFromGitHub(): Promise<{ context: string; files: number } | null> {
+  const repo = process.env.OBSIDIAN_VAULT_REPO;
+  const token = process.env.OBSIDIAN_VAULT_TOKEN;
+
+  if (!repo || !token) return null;
+
+  try {
+    // Get file tree from GitHub API
+    const treeRes = await fetch(`https://api.github.com/repos/${repo}/git/trees/main?recursive=1`, {
+      headers: { Authorization: `Bearer ${token}`, 'User-Agent': 'second-brain' },
+    });
+    if (!treeRes.ok) return null;
+    const tree = await treeRes.json() as { tree: Array<{ path: string; type: string; sha: string }> };
+
+    // Get priority files (limit to top 30 for performance)
+    const mdFiles = tree.tree
+      .filter((f) => f.type === 'blob' && f.path.endsWith('.md') && !f.path.startsWith('.'))
+      .slice(0, 30);
+
+    const files: ObsidianFile[] = [];
+    for (const f of mdFiles) {
+      try {
+        const contentRes = await fetch(`https://api.github.com/repos/${repo}/contents/${f.path}`, {
+          headers: { Authorization: `Bearer ${token}`, 'User-Agent': 'second-brain' },
+        });
+        if (!contentRes.ok) continue;
+        const fileData = await contentRes.json() as { content?: string; name?: string };
+        if (fileData.content) {
+          const content = Buffer.from(fileData.content, 'base64').toString('utf8').slice(0, 2000);
+          files.push({
+            path: f.path,
+            title: f.path.split('/').pop()?.replace(/\.md$/, '') ?? f.path,
+            content,
+          });
+        }
+      } catch {}
+    }
+
+    let context = '';
+    let count = 0;
+    for (const f of files) {
+      const chunk = `\n\n[${f.path}]\n${f.content}`;
+      if (context.length + chunk.length > 8000) break;
+      context += chunk;
+      count++;
+    }
+
+    return { context, files: count };
+  } catch {
+    return null;
+  }
+}
+
 function readVaultContext(vaultPath: string, maxChars = 8000): { context: string; files: number } {
   try {
     const files: ObsidianFile[] = [];
@@ -100,27 +153,39 @@ function readVaultContext(vaultPath: string, maxChars = 8000): { context: string
 
 declare global {
   // eslint-disable-next-line no-var
-  var __vaultContextCache: { context: string; files: number; loadedAt: number } | undefined;
+  var __vaultContextCache: { context: string; files: number; loadedAt: number; source: string } | undefined;
 }
 
-function getObsidianContext(): { context: string; files: number } {
-  // Cache for 5 minutes to avoid reading disk on every request
+async function getObsidianContext(): Promise<{ context: string; files: number; source: string }> {
+  // Cache for 5 minutes
   if (globalThis.__vaultContextCache && Date.now() - globalThis.__vaultContextCache.loadedAt < 300_000) {
-    return { context: globalThis.__vaultContextCache.context, files: globalThis.__vaultContextCache.files };
+    return {
+      context: globalThis.__vaultContextCache.context,
+      files: globalThis.__vaultContextCache.files,
+      source: globalThis.__vaultContextCache.source,
+    };
   }
 
+  // Try GitHub first (works in Vercel)
+  const githubResult = await downloadVaultFromGitHub();
+  if (githubResult && githubResult.files > 0) {
+    globalThis.__vaultContextCache = { ...githubResult, loadedAt: Date.now(), source: 'github' };
+    return { ...githubResult, source: 'github' };
+  }
+
+  // Fallback to local disk (works in dev)
   const vaultPath = findVaultPath();
-  if (!vaultPath) {
-    return { context: '(Obsidian vault not found)', files: 0 };
+  if (vaultPath) {
+    const result = readVaultContext(vaultPath);
+    globalThis.__vaultContextCache = { ...result, loadedAt: Date.now(), source: 'local' };
+    return { ...result, source: 'local' };
   }
 
-  const result = readVaultContext(vaultPath);
-  globalThis.__vaultContextCache = { ...result, loadedAt: Date.now() };
-  return result;
+  return { context: '', files: 0, source: 'none' };
 }
 
 async function callClaude(userMessage: string, conversationHistory: Array<{ role: 'user' | 'assistant'; content: string }> = []): Promise<string> {
-  const vault = getObsidianContext();
+  const vault = await getObsidianContext();
 
   const systemPrompt = `Você é o Second Brain OS, assistente pessoal do Junin (Wesley Rocha Santos Junior).
 
@@ -198,11 +263,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   // Health check
   if (req.method === 'GET') {
-    const vault = getObsidianContext();
+    const vault = await getObsidianContext();
     res.status(200).json({
       ok: true,
       model: ANTHROPIC_MODEL,
       vault_files: vault.files,
+      vault_source: vault.source,
       timestamp: new Date().toISOString(),
     });
     return;
