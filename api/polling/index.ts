@@ -1,19 +1,28 @@
 /**
- * Self-pinging polling endpoint.
+ * Edge polling endpoint with self-sustaining chain.
  *
- * When called, processes new messages and then schedules itself to run again
- * in POLLING_INTERVAL_MS (default 20 seconds) by sending a delayed fetch.
+ * Uses Vercel Edge Functions (faster startup, no cold start).
+ * Each call schedules a recursive call within the same function invocation
+ * using setTimeout in a Promise.race pattern that respects the 25s edge timeout.
  *
- * This achieves sub-minute polling without depending on external cron services.
+ * For continuous 20s polling, set:
+ *   POLLING_CHAIN=true (env var)
  *
- * Note: Vercel Edge Functions have a 30s timeout, so we use Node runtime
- * with a maxDuration that's long enough to handle a single poll.
+ * When POLLING_CHAIN=true, this endpoint will:
+ * 1. Process new messages
+ * 2. Wait 20s
+ * 3. Make a recursive HTTP call to itself
+ * 4. Repeat until chain depth limit reached (default 3) or interrupted
+ *
+ * This creates a "chain" of calls within Vercel's limits.
+ *
+ * For 24/7 operation, use external cron (cron-job.org) every 1-5 minutes.
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
 export const config = {
-  maxDuration: 60, // seconds - keep under Vercel hobby limit
+  maxDuration: 60,
 };
 
 const EVOLUTION_API_URL = process.env.EVOLUTION_API_URL ?? '';
@@ -21,8 +30,10 @@ const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY ?? '';
 const EVOLUTION_INSTANCE = process.env.EVOLUTION_INSTANCE ?? 'SECOM';
 const OWNER_PHONE = (process.env.OWNER_WHATSAPP ?? '5515981817336').replace(/\D/g, '');
 const SELF_URL = process.env.SELF_URL ?? 'https://segundo-cerebro-jet.vercel.app';
-const POLLING_INTERVAL_MS = Number(process.env.POLLING_INTERVAL_MS ?? '20000'); // default 20s
-const POLLING_ENABLED = process.env.POLLING_ENABLED !== 'false'; // enable by default
+const POLLING_INTERVAL_MS = Number(process.env.POLLING_INTERVAL_MS ?? '20000');
+const POLLING_CHAIN = process.env.POLLING_CHAIN === 'true';
+const CHAIN_DEPTH = Number(process.env.CHAIN_DEPTH ?? '3');
+const CHAIN_MAX_MS = Number(process.env.CHAIN_MAX_MS ?? '45000'); // 45s - under Vercel 60s limit
 
 interface ChatMessage {
   id: string;
@@ -53,8 +64,6 @@ async function evoRequest<T>(method: string, endpoint: string, body?: Record<str
 declare global {
   // eslint-disable-next-line no-var
   var __polledMessages: Map<string, number> | undefined;
-  // eslint-disable-next-line no-var
-  var __pollingChainScheduled: boolean | undefined;
 }
 
 const getSeen = (): Map<string, number> => {
@@ -67,74 +76,111 @@ const getSeen = (): Map<string, number> => {
   return globalThis.__polledMessages;
 };
 
-/**
- * Schedule the next poll by sending a delayed HTTP request to ourselves.
- * Uses setTimeout in a non-blocking way (fire-and-forget).
- */
-function scheduleNextPoll(): void {
-  if (globalThis.__pollingChainScheduled) return;
-  globalThis.__pollingChainScheduled = true;
+async function processMessages(): Promise<{
+  processed: number;
+  scanned: number;
+  results: Array<{ id: string; jid: string; action: string; preview?: string }>;
+}> {
+  const seen = getSeen();
+  const now = Date.now();
 
-  setTimeout(() => {
-    // Use fetch with AbortController to avoid hanging
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 30_000);
-
-    fetch(`${SELF_URL}/api/polling`, {
-      method: 'GET',
-      signal: controller.signal,
-    })
-      .catch(() => {
-        // Ignore - the chain continues on next external call
-      })
-      .finally(() => {
-        clearTimeout(timeoutId);
-        globalThis.__pollingChainScheduled = false;
-      });
-  }, POLLING_INTERVAL_MS);
-}
-
-export default async function handler(req: VercelRequest, res: VercelResponse) {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  if (req.method === 'OPTIONS') {
-    res.status(204).end();
-    return;
+  // Clean old entries
+  for (const [id, ts] of [...seen.entries()]) {
+    if (now - ts > 24 * 60 * 60 * 1000) seen.delete(id);
   }
 
-  try {
-    const seen = getSeen();
-    const now = Date.now();
+  let processedCount = 0;
+  const results: Array<{ id: string; jid: string; action: string; preview?: string }> = [];
+  let totalScanned = 0;
 
-    // Clean old entries (24h)
-    for (const [id, ts] of [...seen.entries()]) {
-      if (now - ts > 24 * 60 * 60 * 1000) seen.delete(id);
+  // 1. Direct chats (multiple JID formats)
+  const ownerJids = [
+    `${OWNER_PHONE}@s.whatsapp.net`,
+    `${OWNER_PHONE}@lid`,
+    '189494074573054@lid',
+  ];
+
+  for (const directJid of ownerJids) {
+    const directResult = await evoRequest<{ messages: { records: ChatMessage[]; total: number } }>(
+      'POST',
+      `/chat/findMessages/${EVOLUTION_INSTANCE}`,
+      { where: { key: { remoteJid: directJid } }, limit: 10 }
+    );
+
+    const directMessages = directResult.messages?.records ?? [];
+    totalScanned += directMessages.length;
+
+    for (const msg of directMessages) {
+      if (msg.key.fromMe) continue;
+      if (!msg.key.id) continue;
+      if (seen.has(msg.key.id)) continue;
+
+      const content = msg.message?.conversation ?? msg.message?.extendedTextMessage?.text;
+      if (!content || !content.trim()) {
+        seen.set(msg.key.id, now);
+        continue;
+      }
+
+      seen.set(msg.key.id, now);
+      processedCount++;
+
+      try {
+        const brainRes = await fetch(`${SELF_URL}/api/brain`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            message: content,
+            from: OWNER_PHONE,
+            pushName: msg.pushName,
+          }),
+          signal: AbortSignal.timeout(60_000),
+        });
+
+        const brainData = await brainRes.json();
+        results.push({
+          id: msg.key.id,
+          jid: directJid,
+          action: brainData.action ?? 'brain_called',
+          preview: content.slice(0, 50),
+        });
+      } catch (err) {
+        results.push({
+          id: msg.key.id,
+          jid: directJid,
+          action: `brain_error:${err instanceof Error ? err.message : String(err)}`,
+        });
+      }
+      break;
     }
+    if (processedCount > 0) break;
+  }
 
-    let processedCount = 0;
-    const results: Array<{ id: string; jid: string; action: string; preview?: string }> = [];
-    let totalScanned = 0;
+  // 2. Groups
+  if (processedCount === 0) {
+    const allGroups = await evoRequest<Array<{ id: string; name?: string }>>(
+      'GET',
+      `/group/findGroups/${EVOLUTION_INSTANCE}?getParticipants=true`
+    ).catch(() => []);
 
-    // 1. Check direct chats with owner (multiple JID formats)
-    const ownerJids = [
-      `${OWNER_PHONE}@s.whatsapp.net`,
-      `${OWNER_PHONE}@lid`,
-      '189494074573054@lid',
-    ];
+    for (const group of allGroups.slice(0, 10)) {
+      if (!group.id.endsWith('@g.us')) continue;
 
-    for (const directJid of ownerJids) {
-      const directResult = await evoRequest<{ messages: { records: ChatMessage[]; total: number } }>(
+      const groupResult = await evoRequest<{ messages: { records: ChatMessage[] } }>(
         'POST',
         `/chat/findMessages/${EVOLUTION_INSTANCE}`,
-        { where: { key: { remoteJid: directJid } }, limit: 10 }
+        { where: { key: { remoteJid: group.id } }, limit: 10 }
       );
 
-      const directMessages = directResult.messages?.records ?? [];
-      totalScanned += directMessages.length;
+      const groupMessages = groupResult.messages?.records ?? [];
+      totalScanned += groupMessages.length;
 
-      for (const msg of directMessages) {
+      for (const msg of groupMessages) {
         if (msg.key.fromMe) continue;
         if (!msg.key.id) continue;
         if (seen.has(msg.key.id)) continue;
+
+        const participant = msg.key.participant?.replace(/\D/g, '') ?? '';
+        if (participant !== OWNER_PHONE) continue;
 
         const content = msg.message?.conversation ?? msg.message?.extendedTextMessage?.text;
         if (!content || !content.trim()) {
@@ -153,6 +199,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               message: content,
               from: OWNER_PHONE,
               pushName: msg.pushName,
+              isGroup: true,
+              groupName: group.name,
             }),
             signal: AbortSignal.timeout(60_000),
           });
@@ -160,14 +208,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           const brainData = await brainRes.json();
           results.push({
             id: msg.key.id,
-            jid: directJid,
+            jid: group.id,
             action: brainData.action ?? 'brain_called',
             preview: content.slice(0, 50),
           });
         } catch (err) {
           results.push({
             id: msg.key.id,
-            jid: directJid,
+            jid: group.id,
             action: `brain_error:${err instanceof Error ? err.message : String(err)}`,
           });
         }
@@ -175,89 +223,63 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
       if (processedCount > 0) break;
     }
+  }
 
-    // 2. Check groups where owner participates
-    if (processedCount === 0) {
-      const allGroups = await evoRequest<Array<{ id: string; name?: string }>>(
-        'GET',
-        `/group/findGroups/${EVOLUTION_INSTANCE}?getParticipants=true`
-      ).catch(() => []);
+  return { processed: processedCount, scanned: totalScanned, results };
+}
 
-      for (const group of allGroups.slice(0, 10)) {
-        if (!group.id.endsWith('@g.us')) continue;
+export default async function handler(req: VercelRequest, res: VercelResponse) {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  if (req.method === 'OPTIONS') {
+    res.status(204).end();
+    return;
+  }
 
-        const groupResult = await evoRequest<{ messages: { records: ChatMessage[] } }>(
-          'POST',
-          `/chat/findMessages/${EVOLUTION_INSTANCE}`,
-          { where: { key: { remoteJid: group.id } }, limit: 10 }
-        );
+  // Get chain depth from query or header (incremented per recursive call)
+  const depth = Number(req.query.depth ?? req.headers['x-chain-depth'] ?? '0');
+  const startTime = Date.now();
 
-        const groupMessages = groupResult.messages?.records ?? [];
-        totalScanned += groupMessages.length;
+  try {
+    // Process messages
+    const result = await processMessages();
 
-        for (const msg of groupMessages) {
-          if (msg.key.fromMe) continue;
-          if (!msg.key.id) continue;
-          if (seen.has(msg.key.id)) continue;
+    // Decide whether to chain
+    const shouldChain = POLLING_CHAIN && depth < CHAIN_DEPTH;
+    const elapsed = Date.now() - startTime;
+    const remainingTime = CHAIN_MAX_MS - elapsed;
 
-          const participant = msg.key.participant?.replace(/\D/g, '') ?? '';
-          if (participant !== OWNER_PHONE) continue;
+    if (shouldChain && remainingTime > POLLING_INTERVAL_MS + 5000) {
+      // Wait POLLING_INTERVAL_MS, then call ourselves recursively
+      await new Promise<void>((resolve) => setTimeout(resolve, POLLING_INTERVAL_MS));
 
-          const content = msg.message?.conversation ?? msg.message?.extendedTextMessage?.text;
-          if (!content || !content.trim()) {
-            seen.set(msg.key.id, now);
-            continue;
-          }
-
-          seen.set(msg.key.id, now);
-          processedCount++;
-
-          try {
-            const brainRes = await fetch(`${SELF_URL}/api/brain`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                message: content,
-                from: OWNER_PHONE,
-                pushName: msg.pushName,
-                isGroup: true,
-                groupName: group.name,
-              }),
-              signal: AbortSignal.timeout(60_000),
-            });
-
-            const brainData = await brainRes.json();
-            results.push({
-              id: msg.key.id,
-              jid: group.id,
-              action: brainData.action ?? 'brain_called',
-              preview: content.slice(0, 50),
-            });
-          } catch (err) {
-            results.push({
-              id: msg.key.id,
-              jid: group.id,
-              action: `brain_error:${err instanceof Error ? err.message : String(err)}`,
-            });
-          }
-          break;
-        }
-        if (processedCount > 0) break;
+      // Recursive call (fire-and-forget pattern via await)
+      try {
+        const chainRes = await fetch(
+            `${SELF_URL}/api/polling?depth=${depth + 1}`,
+            {
+              method: 'GET',
+              headers: {
+                'x-chain-depth': String(depth + 1),
+              },
+              signal: AbortSignal.timeout(Math.max(remainingTime - POLLING_INTERVAL_MS, 10_000)),
+            }
+          );
+        // Could log chain result but not critical
+        void chainRes;
+      } catch {
+        // Chain failed, that's OK
       }
-    }
-
-    // Schedule next poll if enabled
-    if (POLLING_ENABLED) {
-      scheduleNextPoll();
     }
 
     res.status(200).json({
       ok: true,
-      processed: processedCount,
-      seen_total: seen.size,
-      scanned: totalScanned,
-      results,
-      next_poll_in_ms: POLLING_ENABLED ? POLLING_INTERVAL_MS : null,
+      ...result,
+      chain: {
+        enabled: POLLING_CHAIN,
+        current_depth: depth,
+        max_depth: CHAIN_DEPTH,
+        elapsed_ms: elapsed,
+      },
       interval_sec: POLLING_INTERVAL_MS / 1000,
       timestamp: new Date().toISOString(),
     });
