@@ -5,6 +5,30 @@ const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY ?? '';
 const EVOLUTION_INSTANCE = process.env.EVOLUTION_INSTANCE ?? 'SECOM';
 const OWNER_PHONE = (process.env.OWNER_WHATSAPP ?? '5515981817336').replace(/\D/g, '');
 
+// Secret redaction patterns (inline to avoid dependency)
+const SECRET_PATTERNS: Array<{ pattern: RegExp; replacement: string }> = [
+  { pattern: /gsk_[A-Za-z0-9]{20,}/g, replacement: '[REDACTED:gsk]' },
+  { pattern: /sk-ant-[A-Za-z0-9_-]{16,}/g, replacement: '[REDACTED:sk-ant]' },
+  { pattern: /sk-nx-[A-Za-z0-9]{20,}/g, replacement: '[REDACTED:sk-nx]' },
+  { pattern: /sk-[A-Za-z0-9]{20,}T3BlbkFJ[A-Za-z0-9]{20,}/g, replacement: '[REDACTED:openai]' },
+  { pattern: /sk-or-v1-[A-Za-z0-9]{20,}/g, replacement: '[REDACTED:openrouter]' },
+  { pattern: /hf_[A-Za-z0-9]{20,}/g, replacement: '[REDACTED:huggingface]' },
+  { pattern: /ghp_[A-Za-z0-9]{20,}/g, replacement: '[REDACTED:github]' },
+  { pattern: /AIza[0-9A-Za-z_-]{35}/g, replacement: '[REDACTED:google]' },
+  { pattern: /AKIA[0-9A-Z]{16}/g, replacement: '[REDACTED:aws]' },
+  { pattern: /Bearer\s+[A-Za-z0-9_.\-]{20,}/gi, replacement: 'Bearer [REDACTED]' },
+  { pattern: /([a-zA-Z0-9._%+-]+):([a-zA-Z0-9._%+-]+)@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g, replacement: '[REDACTED:credentials]' },
+];
+
+function redact(text: string): string {
+  if (!text) return text;
+  let result = text;
+  for (const { pattern, replacement } of SECRET_PATTERNS) {
+    result = result.replace(pattern, replacement);
+  }
+  return result;
+}
+
 interface EvolutionMessage {
   key: { remoteJid: string; fromMe: boolean; id: string };
   pushName?: string;
@@ -89,7 +113,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return;
     }
 
-    console.log('[WEBHOOK] Parsed body:', JSON.stringify(body).slice(0, 500));
+    console.log('[WEBHOOK] Parsed body:', JSON.stringify(body).slice(0, 500).replace(/(gsk_|sk-ant-|sk-nx-|sk-or-v1-|hf_|ghp_|AIza|AKIA)[A-Za-z0-9_-]{10,}/g, '[REDACTED]'));
 
     if (!body?.event || !body?.instance) {
       console.log('[WEBHOOK] Missing event or instance');

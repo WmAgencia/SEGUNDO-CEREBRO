@@ -1,9 +1,18 @@
+/**
+ * Vercel Function: Polls Evolution API for new messages from the owner
+ * and calls the /api/brain endpoint to generate intelligent responses.
+ *
+ * This is the orchestrator that keeps the WhatsApp ↔ Second Brain loop running
+ * even when the Evolution webhook doesn't fire reliably.
+ */
+
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
 const EVOLUTION_API_URL = process.env.EVOLUTION_API_URL ?? '';
 const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY ?? '';
 const EVOLUTION_INSTANCE = process.env.EVOLUTION_INSTANCE ?? 'SECOM';
 const OWNER_PHONE = (process.env.OWNER_WHATSAPP ?? '5515981817336').replace(/\D/g, '');
+const SELF_URL = process.env.SELF_URL ?? 'https://segundo-cerebro-jet.vercel.app';
 
 interface ChatMessage {
   id: string;
@@ -31,29 +40,6 @@ async function evoRequest<T>(method: string, endpoint: string, body?: Record<str
   return (await res.json()) as T;
 }
 
-async function sendMessage(toNumber: string, text: string): Promise<{ messageId: string }> {
-  const normalized = toNumber.replace(/\D/g, '');
-  const result = await evoRequest<{ key: { id: string } }>('POST', `/message/sendText/${EVOLUTION_INSTANCE}`, {
-    number: normalized.startsWith('55') ? normalized : `55${normalized}`,
-    text,
-  });
-  return { messageId: result.key?.id ?? 'unknown' };
-}
-
-async function processOwnerMessage(name: string, content: string, isGroup: boolean): Promise<string> {
-  const location = isGroup ? 'no grupo' : 'na conversa';
-  const reply = [
-    '🧠 *Second Brain*',
-    '',
-    `Olá ${name}! Recebi sua mensagem ${location}:`,
-    `"${content}"`,
-    '',
-    '💡 Respondendo via polling ativo.',
-    `Chat web: https://segundo-cerebro-jet.vercel.app`,
-  ].join('\n');
-  return reply;
-}
-
 declare global {
   // eslint-disable-next-line no-var
   var __polledMessages: Map<string, number> | undefined;
@@ -77,91 +63,96 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const seen = getSeen();
     const now = Date.now();
 
-    // Clean old entries (older than 24 hours)
+    // Clean old entries
     for (const [id, ts] of [...seen.entries()]) {
       if (now - ts > 24 * 60 * 60 * 1000) seen.delete(id);
     }
-
-    // Fetch recent messages - BOTH direct and group chats with owner
-    const jidsToCheck = [
-      `${OWNER_PHONE}@s.whatsapp.net`,  // direct conversation
-    ];
 
     let processedCount = 0;
     const results: Array<{ id: string; jid: string; action: string; preview?: string }> = [];
     let totalScanned = 0;
 
-    // Check direct chat with owner
-    for (const jid of jidsToCheck) {
-      const result = await evoRequest<{ messages: { records: ChatMessage[]; total: number } }>(
-        'POST',
-        `/chat/findMessages/${EVOLUTION_INSTANCE}`,
-        { where: { key: { remoteJid: jid } }, limit: 20 }
-      );
+    // 1. Check direct chat with owner
+    const directJid = `${OWNER_PHONE}@s.whatsapp.net`;
+    const directResult = await evoRequest<{ messages: { records: ChatMessage[]; total: number } }>(
+      'POST',
+      `/chat/findMessages/${EVOLUTION_INSTANCE}`,
+      { where: { key: { remoteJid: directJid } }, limit: 10 }
+    );
 
-      const messages = result.messages?.records ?? [];
-      totalScanned += messages.length;
+    const directMessages = directResult.messages?.records ?? [];
+    totalScanned += directMessages.length;
 
-      for (const msg of messages) {
-        if (msg.key.fromMe) continue;
-        if (!msg.key.id) continue;
-        if (seen.has(msg.key.id)) continue;
+    for (const msg of directMessages) {
+      if (msg.key.fromMe) continue;
+      if (!msg.key.id) continue;
+      if (seen.has(msg.key.id)) continue;
 
-        const content = msg.message?.conversation ?? msg.message?.extendedTextMessage?.text;
-        if (!content || !content.trim()) {
-          seen.set(msg.key.id, now);
-          continue;
-        }
-
-        // Skip messages from other participants in groups (LID format)
-        if (msg.key.participant && msg.key.participant.endsWith('@lid')) continue;
-
+      const content = msg.message?.conversation ?? msg.message?.extendedTextMessage?.text;
+      if (!content || !content.trim()) {
         seen.set(msg.key.id, now);
-        processedCount++;
-
-        try {
-          const reply = await processOwnerMessage(msg.pushName ?? OWNER_PHONE, content.trim(), false);
-          const sent = await sendMessage(OWNER_PHONE, reply);
-          results.push({ id: msg.key.id, jid, action: `replied:${sent.messageId}`, preview: content.slice(0, 50) });
-        } catch (err) {
-          results.push({ id: msg.key.id, jid, action: `error:${err instanceof Error ? err.message : String(err)}` });
-        }
-        break; // one per poll
+        continue;
       }
-      if (processedCount > 0) break;
+
+      seen.set(msg.key.id, now);
+      processedCount++;
+
+      // Call /api/brain to generate response
+      try {
+        const brainRes = await fetch(`${SELF_URL}/api/brain`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            message: content,
+            from: OWNER_PHONE,
+            pushName: msg.pushName,
+          }),
+          signal: AbortSignal.timeout(60_000),
+        });
+
+        const brainData = await brainRes.json();
+        results.push({
+          id: msg.key.id,
+          jid: directJid,
+          action: brainData.action ?? 'brain_called',
+          preview: content.slice(0, 50),
+        });
+      } catch (err) {
+        results.push({
+          id: msg.key.id,
+          jid: directJid,
+          action: `brain_error:${err instanceof Error ? err.message : String(err)}`,
+        });
+      }
+      break;
     }
 
-    // If no direct message, check groups where owner might be participant
+    // 2. If no direct message, check groups where owner participates
     if (processedCount === 0) {
-      // Fetch all chats (groups + direct)
-      const allChats = await evoRequest<Array<{ id: string; name?: string }>>(
+      const allGroups = await evoRequest<Array<{ id: string; name?: string }>>(
         'GET',
         `/group/findGroups/${EVOLUTION_INSTANCE}?getParticipants=true`
       ).catch(() => []);
 
-      const ownerLid = `${OWNER_PHONE}@s.whatsapp.net`;
-
-      for (const group of allChats.slice(0, 10)) {
+      for (const group of allGroups.slice(0, 10)) {
         if (!group.id.endsWith('@g.us')) continue;
 
-        const result = await evoRequest<{ messages: { records: ChatMessage[] } }>(
+        const groupResult = await evoRequest<{ messages: { records: ChatMessage[] } }>(
           'POST',
           `/chat/findMessages/${EVOLUTION_INSTANCE}`,
           { where: { key: { remoteJid: group.id } }, limit: 10 }
         );
 
-        const messages = result.messages?.records ?? [];
-        totalScanned += messages.length;
+        const groupMessages = groupResult.messages?.records ?? [];
+        totalScanned += groupMessages.length;
 
-        for (const msg of messages) {
+        for (const msg of groupMessages) {
           if (msg.key.fromMe) continue;
           if (!msg.key.id) continue;
           if (seen.has(msg.key.id)) continue;
 
           const participant = msg.key.participant?.replace(/\D/g, '') ?? '';
-          const isFromOwner = participant === OWNER_PHONE;
-
-          if (!isFromOwner) continue;
+          if (participant !== OWNER_PHONE) continue;
 
           const content = msg.message?.conversation ?? msg.message?.extendedTextMessage?.text;
           if (!content || !content.trim()) {
@@ -173,11 +164,32 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           processedCount++;
 
           try {
-            const reply = await processOwnerMessage(msg.pushName ?? OWNER_PHONE, content.trim(), true);
-            const sent = await sendMessage(OWNER_PHONE, reply);
-            results.push({ id: msg.key.id, jid: group.id, action: `replied:${sent.messageId}`, preview: content.slice(0, 50) });
+            const brainRes = await fetch(`${SELF_URL}/api/brain`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                message: content,
+                from: OWNER_PHONE,
+                pushName: msg.pushName,
+                isGroup: true,
+                groupName: group.name,
+              }),
+              signal: AbortSignal.timeout(60_000),
+            });
+
+            const brainData = await brainRes.json();
+            results.push({
+              id: msg.key.id,
+              jid: group.id,
+              action: brainData.action ?? 'brain_called',
+              preview: content.slice(0, 50),
+            });
           } catch (err) {
-            results.push({ id: msg.key.id, jid: group.id, action: `error:${err instanceof Error ? err.message : String(err)}` });
+            results.push({
+              id: msg.key.id,
+              jid: group.id,
+              action: `brain_error:${err instanceof Error ? err.message : String(err)}`,
+            });
           }
           break;
         }

@@ -2,6 +2,7 @@ import { DatabaseSync } from "node:sqlite";
 import type { CompletionRequest, CompletionResult, LLMProvider } from "./llm-provider.ts";
 import { GroqKeyPool, classifyError } from "./groq-key-pool.ts";
 import { buildProviderChain, loadGatewayGroqKeys } from "./model-gateway.ts";
+import { AnthropicProvider } from "./anthropic-provider.ts";
 
 export type ModelWorkload = "chat" | "reasoning" | "research" | "coding" | "vision" | "image" | "fast";
 export interface ModelRoute { provider: string; model: string; reason: string; estimatedCost: number | null; fallbackChain: string[]; }
@@ -95,14 +96,43 @@ export class GroqPoolProvider implements LLMProvider {
   }
 }
 
-/** Cadeia de providers padrão — delega ao Model Gateway (ordem via MODEL_PROVIDER_ORDER,
- *  inclui Groq pool + Alibaba/Qwen + OpenRouter). O workload escolhe o modelo Qwen.
+/**
+ * Cadeia de providers padrão:
+ *   1. Anthropic (Nexxus ou API direta) — primário
+ *   2. Groq pool — fallback rápido
+ *   3. OpenRouter — fallback final
+ *
+ * O workload escolhe o modelo (claude-sonnet-5, claude-haiku-4-5, etc).
  *  Nunca esconde erro do provider. */
 export function defaultProviderChain(route = selectModel({}), workload?: string): LLMProvider[] {
-  const chain = buildProviderChain({ groqModel: process.env.GROQ_MODEL ?? route.model, workload });
-  if (chain.length > 0) return chain;
-  // sem nenhuma chave configurada: mantém comportamento honesto (lança erro ao tentar)
-  return [new OpenRouterProvider(route)];
+  const chain: LLMProvider[] = [];
+
+  // 1. Anthropic/Nexxus como primário se tiver chave
+  const anthropicKey = process.env.ANTHROPIC_API_KEY;
+  if (anthropicKey) {
+    const modelByWorkload: Record<string, string> = {
+      fast: "claude-haiku-4-5",
+      chat: "claude-sonnet-5",
+      reasoning: "claude-sonnet-5",
+      research: "claude-sonnet-5",
+      coding: "claude-sonnet-5",
+      vision: "claude-sonnet-5",
+      image: "claude-sonnet-5",
+    };
+    const model = modelByWorkload[workload ?? "chat"] ?? process.env.ANTHROPIC_MODEL ?? "claude-sonnet-5";
+    chain.push(new AnthropicProvider({ model }));
+  }
+
+  // 2. Groq pool como fallback
+  const gatewayChain = buildProviderChain({ groqModel: process.env.GROQ_MODEL ?? route.model, workload });
+  chain.push(...gatewayChain);
+
+  // 3. OpenRouter como fallback final
+  if (chain.length === 0) {
+    chain.push(new OpenRouterProvider(route));
+  }
+
+  return chain;
 }
 
 export interface GatewayResult extends CompletionResult { provider: string; latencyMs: number; totalTokens?: number; cost?: number; fallbackFrom?: string; keySlot?: number | null; fallbackCount?: number; }
