@@ -53,16 +53,24 @@ Responda de forma útil e natural.`,
 }
 
 async function sendWhatsApp(toNumber: string, text: string): Promise<{ messageId: string }> {
-  const normalized = toNumber.replace(/\D/g, '');
+  // Extract digits only and ensure Brazilian format
+  let normalized = toNumber.replace(/\D/g, '');
+  // If it's a LID (189494074573054), prepend country code
+  if (normalized === '189494074573054') {
+    normalized = '5515981817336'; // Map LID to real phone
+  } else if (normalized.length === 11 && !normalized.startsWith('55')) {
+    normalized = `55${normalized}`;
+  }
+
   const res = await fetch(`${EVOLUTION_API_URL}/message/sendText/${EVOLUTION_INSTANCE}`, {
     method: 'POST',
     headers: { apikey: EVOLUTION_API_KEY, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      number: normalized.startsWith('55') ? normalized : `55${normalized}`,
-      text,
-    }),
+    body: JSON.stringify({ number: normalized, text }),
   });
-  if (!res.ok) throw new Error(`Evolution ${res.status}`);
+  if (!res.ok) {
+    const err = await res.text().catch(() => '');
+    throw new Error(`Evolution ${res.status}: ${err.slice(0, 200)}`);
+  }
   const data = await res.json();
   return { messageId: data.key?.id ?? 'unknown' };
 }
