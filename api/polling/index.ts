@@ -6,8 +6,10 @@ const EVOLUTION_INSTANCE = process.env.EVOLUTION_INSTANCE ?? 'SECOM';
 const OWNER_PHONE = (process.env.OWNER_WHATSAPP ?? '5515981817336').replace(/\D/g, '');
 
 interface ChatMessage {
+  id: string;
   key: { remoteJid: string; fromMe: boolean; id: string };
   pushName?: string;
+  messageType?: string;
   message?: { conversation?: string; extendedTextMessage?: { text?: string } };
   messageTimestamp?: number;
 }
@@ -38,34 +40,29 @@ async function sendMessage(toNumber: string, text: string): Promise<{ messageId:
   return { messageId: result.key?.id ?? 'unknown' };
 }
 
-interface MemoryEntry {
-  id: string;
-  processedAt: number;
-}
-
-declare global {
-  // eslint-disable-next-line no-var
-  var __processedMemory: Set<string> | undefined;
-}
-
-const getProcessed = (): Set<string> => {
-  if (!globalThis.__processedMemory) {
-    globalThis.__processedMemory = new Set<string>();
-  }
-  return globalThis.__processedMemory;
-};
-
 async function processOwnerMessage(name: string, content: string): Promise<string> {
   const reply = [
     '🧠 *Second Brain*',
     '',
     `Olá ${name}! Recebi sua mensagem: "${content}"`,
     '',
-    '💡 Versão polling ativo.',
+    '💡 Via polling ativo (30s).',
     `Chat web: https://segundo-cerebro-jet.vercel.app`,
   ].join('\n');
   return reply;
 }
+
+declare global {
+  // eslint-disable-next-line no-var
+  var __polledMessages: Map<string, number> | undefined;
+}
+
+const getSeen = (): Map<string, number> => {
+  if (!globalThis.__polledMessages) {
+    globalThis.__polledMessages = new Map<string, number>();
+  }
+  return globalThis.__polledMessages;
+};
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -75,65 +72,57 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    // Polling endpoint: /api/polling
-    // Checks Evolution API for new messages and processes them
-    const processed = getProcessed();
-
-    // Clean old entries (older than 1 hour)
+    const seen = getSeen();
     const now = Date.now();
-    for (const id of [...processed]) {
-      // We don't track timestamps in the Set; rely on message IDs being unique enough
-      // Limit size to prevent memory bloat
-      if (processed.size > 1000) processed.delete(id);
+
+    // Clean old entries (older than 24 hours)
+    for (const [id, ts] of [...seen.entries()]) {
+      if (now - ts > 24 * 60 * 60 * 1000) seen.delete(id);
     }
 
-    // Fetch recent messages from owner
-    const chats = await evoRequest<Array<{ id: string; name?: string }>>(
-      'GET',
-      `/chat/findChats/${EVOLUTION_INSTANCE}`
+    // Fetch recent messages from the owner chat
+    const result = await evoRequest<{ messages: { records: ChatMessage[]; total: number } }>(
+      'POST',
+      `/chat/findMessages/${EVOLUTION_INSTANCE}`,
+      {
+        where: { key: { remoteJid: `${OWNER_PHONE}@s.whatsapp.net` } },
+        limit: 10,
+      }
     );
 
+    const messages = result.messages?.records ?? [];
     let processedCount = 0;
-    const results: Array<{ id: string; action: string }> = [];
+    const results: Array<{ id: string; action: string; preview?: string }> = [];
 
-    for (const chat of chats.slice(0, 20)) {
-      const phone = chat.id.split('@')[0] ?? '';
-      if (phone.replace(/\D/g, '') !== OWNER_PHONE) continue;
+    // Process from oldest to newest, skipping already-seen
+    for (const msg of messages.reverse()) {
+      if (msg.key.fromMe) continue;
+      if (!msg.key.id) continue;
+      if (seen.has(msg.key.id)) continue;
 
-      const messages = await evoRequest<{ messages: ChatMessage[] }>(
-        'GET',
-        `/chat/findMessages/${EVOLUTION_INSTANCE}?where=${encodeURIComponent(JSON.stringify({ key: { remoteJid: chat.id } }))}&limit=5`
-      );
-
-      for (const msg of messages.messages ?? []) {
-        if (msg.key.fromMe) continue;
-        if (!msg.key.id) continue;
-        if (processed.has(msg.key.id)) continue;
-
-        const content = msg.message?.conversation ?? msg.message?.extendedTextMessage?.text;
-        if (!content || !content.trim()) {
-          processed.add(msg.key.id);
-          continue;
-        }
-
-        processed.add(msg.key.id);
-        processedCount++;
-
-        const reply = await processOwnerMessage(msg.pushName ?? phone, content.trim());
-        const sent = await sendMessage(phone, reply);
-        results.push({ id: msg.key.id, action: `replied:${sent.messageId}` });
-
-        // Only process one new message per poll to avoid spam
-        break;
+      const content = msg.message?.conversation ?? msg.message?.extendedTextMessage?.text;
+      if (!content || !content.trim()) {
+        seen.set(msg.key.id, now);
+        continue;
       }
 
-      if (processedCount > 0) break;
+      seen.set(msg.key.id, now);
+      processedCount++;
+
+      try {
+        const reply = await processOwnerMessage(msg.pushName ?? OWNER_PHONE, content.trim());
+        const sent = await sendMessage(OWNER_PHONE, reply);
+        results.push({ id: msg.key.id, action: `replied:${sent.messageId}`, preview: content.slice(0, 50) });
+      } catch (err) {
+        results.push({ id: msg.key.id, action: `error:${err instanceof Error ? err.message : String(err)}` });
+      }
     }
 
     res.status(200).json({
       ok: true,
       processed: processedCount,
-      total_chats: chats.length,
+      seen_total: seen.size,
+      scanned: messages.length,
       results,
       timestamp: new Date().toISOString(),
     });
