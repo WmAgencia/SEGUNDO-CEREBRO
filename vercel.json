@@ -4,11 +4,9 @@
   "buildCommand": null,
   "outputDirectory": "apps/agent/public",
   "cleanUrls": true,
-  "routes": [
-    {
-      "src": "/api/(.*)",
-      "dest": "${SECOND_BRAIN_API}/api/$1",
-      "env": ["SECOND_BRAIN_API"]
+  "functions": {
+    "api/**/*.ts": {
+      "runtime": "nodejs24.x"
     }
-  ]
+  }
 }
