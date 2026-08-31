@@ -22,11 +22,14 @@
     "llama:serve": "scripts\\llama-serve.cmd",
     "ai:status": "node apps/cli/src/main.ts ai:status",
     "hq": "node --experimental-strip-types apps/hq/server.ts",
-    "agent": "node --experimental-strip-types apps/agent/server.ts"
+    "agent": "node --experimental-strip-types apps/agent/server.ts",
+    "clipcon:server": "tsx apps/clipcon-server/server.ts",
+    "clipcon:web": "npm --prefix apps/clipcon-web run dev"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
     "commander": "^14.0.0",
+    "ws": "^8.21.3",
     "yaml": "^2.6.1",
     "zod": "^4.4.3"
   },

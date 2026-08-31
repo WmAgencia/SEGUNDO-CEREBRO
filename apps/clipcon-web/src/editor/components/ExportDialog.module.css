@@ -1,0 +1,131 @@
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.7);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+}
+.dialog {
+  background: var(--bg-elevated);
+  border: 1px solid var(--neon-green);
+  border-radius: var(--radius-md);
+  width: 520px;
+  max-width: 90vw;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: var(--glow-green), var(--shadow-panel);
+}
+.head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.title {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.15em;
+  color: var(--neon-green);
+}
+.close {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  font-size: 16px;
+}
+.body {
+  padding: 20px;
+  flex: 1;
+  overflow-y: auto;
+}
+.statusRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-primary);
+  margin-bottom: 16px;
+}
+.dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--text-dim);
+}
+.queued { background: var(--text-dim); }
+.running { background: var(--orange); animation: pulse-glow 1s ease-in-out infinite; }
+.done { background: var(--neon-green); box-shadow: var(--glow-green); }
+.error { background: var(--red); }
+.dim { color: var(--text-dim); font-size: 11px; }
+
+.progress {
+  margin-bottom: 16px;
+}
+.progressBar {
+  height: 4px;
+  background: var(--bg-panel);
+  border-radius: 2px;
+  overflow: hidden;
+  margin-bottom: 8px;
+}
+.progressFill {
+  height: 100%;
+  background: var(--neon-green);
+  box-shadow: var(--glow-green);
+  transition: width 0.3s ease;
+}
+
+.success {
+  text-align: center;
+}
+.successIcon {
+  font-size: 48px;
+  color: var(--neon-green);
+  margin-bottom: 12px;
+  text-shadow: var(--glow-green);
+}
+.successText {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  letter-spacing: 0.1em;
+  margin-bottom: 16px;
+}
+.preview {
+  width: 100%;
+  max-height: 280px;
+  background: #000;
+  border-radius: var(--radius-sm);
+  margin-bottom: 16px;
+}
+.actions {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+}
+
+.error {
+  background: rgba(255, 56, 96, 0.1);
+  border: 1px solid var(--red);
+  padding: 12px;
+  border-radius: var(--radius-sm);
+}
+.errorTitle {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--red);
+  margin-bottom: 8px;
+}
+.errorText {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  max-height: 200px;
+  overflow-y: auto;
+}

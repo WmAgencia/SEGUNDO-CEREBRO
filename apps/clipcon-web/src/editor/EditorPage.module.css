@@ -1,0 +1,42 @@
+.editor {
+  display: flex;
+  height: 100%;
+  background: var(--bg-dark);
+}
+.loading {
+  padding: 60px;
+  text-align: center;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  letter-spacing: 0.1em;
+}
+
+.leftCol {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  width: 280px;
+}
+
+.center {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: var(--bg-dark);
+}
+
+.previewWrap {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.exportBar {
+  display: flex;
+  justify-content: flex-end;
+  padding: 8px 12px;
+  background: var(--bg-elevated);
+  border-bottom: 1px solid var(--border-subtle);
+}
