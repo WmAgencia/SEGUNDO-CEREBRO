@@ -73,6 +73,25 @@ async function sendMessageInternal(toNumber: string, text: string, allowOwner: b
   };
 }
 
+export async function sendAudio(toNumber: string, audioUrl: string): Promise<{ messageId: string; status: string }> {
+  const normalized = toNumber.replace(/\D/g, "");
+  if (normalized === OWNER_PHONE || normalized === `55${OWNER_PHONE}`) {
+    throw new Error("OWNER_PRIVATE_CHANNEL_DISABLED");
+  }
+  const result = await evoRequest<{
+    key: { id: string };
+    status?: string;
+  }>("POST", `/message/sendMedia/${INSTANCE()}`, {
+    number: normalized.startsWith("55") ? normalized : `55${normalized}`,
+    mediaUrl: audioUrl,
+    mediatype: "audio",
+  });
+  return {
+    messageId: result.key?.id ?? "unknown",
+    status: result.status ?? "SENT",
+  };
+}
+
 export async function getConnectionState(): Promise<string> {
   try {
     const instances = await evoRequest<Array<{ name: string; connectionStatus: string }>>(

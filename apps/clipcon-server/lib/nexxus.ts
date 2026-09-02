@@ -1,11 +1,12 @@
 /** Cliente HTTP da Nexxus Pro AI (api.nexxus-pro.site).
  *  OpenAI-compatible: /v1/chat/completions, /v1/audio/transcriptions, etc.
+ *  Usa ANTHROPIC_BASE_URL e ANTHROPIC_API_KEY (não NEXXUS_*).
  */
-const BASE = process.env.NEXXUS_BASE_URL || "https://api.nexxus-pro.site";
-const KEY = process.env.NEXXUS_API_KEY || "";
+const BASE = process.env.ANTHROPIC_BASE_URL || "https://api.nexxus-pro.site";
+const KEY  = process.env.ANTHROPIC_API_KEY  || "";
 
 if (!KEY) {
-  console.warn("[nexxus] NEXXUS_API_KEY não definida — recursos IA vão falhar");
+  console.warn("[nexxus] ANTHROPIC_API_KEY não definida — recursos IA vão falhar");
 }
 
 export interface ChatMessage {
@@ -23,7 +24,7 @@ export interface ChatOptions {
 
 export async function chat(messages: ChatMessage[], opts: ChatOptions = {}): Promise<string> {
   const body: Record<string, unknown> = {
-    model: opts.model || process.env.NEXXUS_MODEL || "claude-opus-5",
+    model: opts.model || process.env.ANTHROPIC_MODEL || "claude-opus-5",
     messages,
     temperature: opts.temperature ?? 0.7,
     max_tokens: opts.max_tokens ?? 2048,
@@ -57,7 +58,7 @@ export async function chatStream(messages: ChatMessage[], opts: ChatOptions = {}
       "User-Agent": "Mozilla/5.0",
     },
     body: JSON.stringify({
-      model: opts.model || process.env.NEXXUS_MODEL || "claude-opus-5",
+      model: opts.model || process.env.ANTHROPIC_MODEL || "claude-opus-5",
       messages,
       temperature: opts.temperature ?? 0.7,
       max_tokens: opts.max_tokens ?? 2048,

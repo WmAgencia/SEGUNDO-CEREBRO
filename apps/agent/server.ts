@@ -305,6 +305,73 @@ export function createAgentHandler(options: AgentServerOptions): { handler: (req
       return;
     }
 
+    // ── Direct WhatsApp Commands (SECOM executor: 15981817336) ──
+    if (req.method === "POST" && p === "/api/direct") {
+      try {
+        const body = await readBody(req);
+        const message = body?.message as Record<string, unknown> | undefined;
+        const key = message?.key as Record<string, unknown> | undefined;
+        const msgContent =
+          (message?.message as Record<string, unknown>)?.conversation ??
+          ((message?.message as Record<string, unknown>)?.extendedTextMessage as Record<string, unknown>)?.text ??
+          "";
+        const content = typeof msgContent === "string" ? msgContent.trim() : "";
+        const remoteJid = String(key?.remoteJid ?? "");
+        const phone = remoteJid.split("@")[0] ?? remoteJid;
+        const fromMe = Boolean(key?.fromMe);
+        const pushName = String(message?.pushName ?? "Executor");
+        const messageId = String(key?.id ?? "");
+
+        // Only accept from executor (15981817336) - ignore from self
+        if (fromMe || !content) {
+          send(res, 200, { processed: false, action: "skipped" });
+          return;
+        }
+
+        const executorPhone = "15981817336";
+        const normalizedPhone = phone.replace(/\D/g, "");
+        if (normalizedPhone !== executorPhone && normalizedPhone !== `55${executorPhone}`) {
+          send(res, 200, { processed: false, action: "unauthorized_sender" });
+          return;
+        }
+
+        // Log command
+        process.stdout.write(`[direct] Command from ${phone}: ${content.slice(0, 100)}\n`);
+
+        // Execute command via SingleAgent
+        const sessionKey = `whatsapp-direct-${Date.now().toString(36)}`;
+        const result = await agent.chat(config, sessionKey, content, undefined, { deferApproval: true });
+
+        // Extract message content from ChatMessage object
+        const responseText = result.message?.content ?? "Concluído.";
+
+        // Generate context in Obsidian
+        await generateContextRecord(config, phone, pushName, content, { message: responseText, type: result.type });
+
+        // Send confirmation back via WhatsApp
+        let confirmationSent = false;
+        try {
+          const { sendMessage } = await import("../../core/comms/evolution-api.ts");
+          const reply = `✅ *Comando executado!*\n\n📝 ${content}\n\n${responseText}`.slice(0, 1024);
+          await sendMessage(phone, reply);
+          confirmationSent = true;
+        } catch (sendError) {
+          process.stdout.write(`[direct] Failed to send confirmation: ${sendError}\n`);
+        }
+
+        send(res, 200, {
+          processed: true,
+          action: "command_executed",
+          executor: phone,
+          confirmationSent,
+          result: responseText.slice(0, 200)
+        });
+      } catch (error) {
+        send(res, 200, { processed: false, error: String(error) });
+      }
+      return;
+    }
+
     // ── Images (tool_execution de image_generate com URLs reais) ──
     if (req.method === "GET" && p === "/api/images") {
       const db = openDatabase(config.dbPath);
@@ -382,6 +449,79 @@ function safeGroqKeys(): string[] {
 
 function countGroq(): number {
   return safeGroqKeys().length;
+}
+
+/**
+ * Gera contexto no Obsidian para comandos executados via WhatsApp
+ */
+async function generateContextRecord(
+  config: BrainConfig,
+  executorPhone: string,
+  executorName: string,
+  command: string,
+  result: { message?: string; type?: string }
+): Promise<void> {
+  try {
+    const { writeFileSync, mkdirSync, existsSync } = await import("node:fs");
+    const vaultPath = process.env.SECOND_BRAIN_VAULT ?? "";
+    if (!vaultPath) return;
+
+    const contextDir = `${vaultPath}/08 - Context`;
+    if (!existsSync(contextDir)) {
+      mkdirSync(contextDir, { recursive: true });
+    }
+
+    const now = new Date();
+    const dateStr = now.toISOString().split("T")[0];
+    const timeStr = now.toISOString().split("T")[1].slice(0, 8);
+    const fileName = `whatsapp-command-${Date.now()}.md`;
+    const filePath = `${contextDir}/${fileName}`;
+
+    const content = `---
+type: context
+title: Comando WhatsApp - ${dateStr}
+created: ${now.toISOString()}
+executor: ${executorName}
+executor_phone: ${executorPhone}
+channel: whatsapp-direct
+tags: [whatsapp, command, executor]
+---
+
+# Comando WhatsApp - ${dateStr} ${timeStr}
+
+## Comando
+
+\`\`\`
+${command}
+\`\`\`
+
+## Executor
+
+| Campo | Valor |
+|-------|-------|
+| Nome | ${executorName} |
+| Telefone | ${executorPhone} |
+
+## Resultado
+
+${result.message ?? "Comando executado com sucesso."}
+
+## Timestamp
+
+- Data: ${dateStr}
+- Hora: ${timeStr}
+- ID: ${Date.now()}
+
+---
+
+*Gerado automaticamente via Second Brain OS*
+`;
+
+    writeFileSync(filePath, content, "utf8");
+    process.stdout.write(`[direct] Context saved: ${fileName}\n`);
+  } catch (err) {
+    process.stdout.write(`[direct] Failed to save context: ${err}\n`);
+  }
 }
 
 // ── Entrypoint standalone (npm run agent) ──
